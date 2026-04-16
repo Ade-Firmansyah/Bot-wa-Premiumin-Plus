@@ -4,3 +4,4 @@ sessions/
 .wwebjs_cache/
 database/
 logs/
+src/database/
