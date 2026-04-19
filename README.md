@@ -27,9 +27,47 @@ npm install
 
 Buat file `.env`
 
+**Opsi 1: Menggunakan API Key Langsung (Direkomendasikan untuk Pemula)**
+
 ```env
 API_KEY=ISI_API_PREMKU_KAMU
 ```
+
+**Opsi 2: Menggunakan API Key Terenkripsi (Lebih Aman)**
+
+Untuk keamanan tambahan, Anda dapat menggunakan API key yang dienkripsi. Jalankan script berikut untuk menghasilkan `CRYPTO_SECRET` dan `ENCRYPTED_API_KEY`:
+
+```bash
+node -e "
+const crypto = require('crypto');
+const ALGORITHM = 'aes-256-cbc';
+const IV_LENGTH = 16;
+function deriveKey(secret) { return crypto.createHash('sha256').update(String(secret)).digest(); }
+function encrypt(text, secret) {
+  const key = deriveKey(secret);
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+  const encrypted = Buffer.concat([cipher.update(String(text), 'utf8'), cipher.final()]);
+  return \`\${iv.toString('base64')}:\${encrypted.toString('base64')}\`;
+}
+const CRYPTO_SECRET = crypto.randomBytes(32).toString('hex');
+const API_KEY = 'ISI_API_PREMKU_KAMU'; // Ganti dengan API key Anda
+const ENCRYPTED_API_KEY = encrypt(API_KEY, CRYPTO_SECRET);
+console.log('CRYPTO_SECRET=' + CRYPTO_SECRET);
+console.log('ENCRYPTED_API_KEY=' + ENCRYPTED_API_KEY);
+"
+```
+
+Kemudian tambahkan ke `.env`:
+
+```env
+CRYPTO_SECRET=GENERATED_CRYPTO_SECRET_HERE
+ENCRYPTED_API_KEY=GENERATED_ENCRYPTED_API_KEY_HERE
+```
+
+**Validasi Setup ENV:**
+
+Jalankan bot dan periksa log. Jika berhasil, Anda akan melihat pesan "injected env" tanpa warning error dekripsi.
 
 ---
 
