@@ -60,12 +60,16 @@ function createClient() {
     killExistingBrowsers()
   }
 
+  // For local development, always use unique session path to avoid conflicts
+  let sessionPath = SESSION_PATH
+  if (!isRailway) {
+    sessionPath = path.join(SESSION_PATH, `session_${Date.now()}`)
+  } else {
+    sessionPath = path.join(SESSION_PATH, `session_${Date.now()}`)
+  }
+
   const client = new Client({
-    authStrategy: new LocalAuth({
-      dataPath: isRailway
-        ? path.join(SESSION_PATH, `session_${Date.now()}`)
-        : SESSION_PATH
-    }),
+    authStrategy: new LocalAuth({ dataPath: sessionPath }),
     puppeteer: {
       headless: true,
       executablePath: isRailway ? undefined : undefined, // Let Puppeteer find Chrome
