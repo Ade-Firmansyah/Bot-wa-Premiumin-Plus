@@ -1,10 +1,15 @@
 const fs = require('fs')
 const path = require('path')
+const http = require('http')
 const { spawn } = require('child_process')
 const qrcode = require('qrcode-terminal')
+const QRCode = require('qrcode')
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js')
 const { logInfo, logError } = require('../utils/logger')
 const { SESSION_PATH } = require('../config')
+
+let latestQrDataUrl = null
+let qrServer = null
 
 function ensureSessionPath() {
   if (!fs.existsSync(SESSION_PATH)) {
@@ -47,6 +52,44 @@ function clearSessionData() {
   } catch (error) {
     logError('Failed to clear session data', error)
   }
+}
+
+function startQrHttpServer(port = process.env.PORT || 3000) {
+  if (qrServer) {
+    return
+  }
+
+  qrServer = http.createServer((req, res) => {
+    if (req.url !== '/' && req.url !== '/qr') {
+      res.writeHead(404, { 'Content-Type': 'text/plain' })
+      return res.end('Not found')
+    }
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WhatsApp QR</title>
+  <style>body{font-family:Arial,sans-serif;text-align:center;padding:30px;background:#111;color:#fff}img{max-width:100%;height:auto;border:4px solid #fff;box-shadow:0 0 20px rgba(255,255,255,.2)}.hint{margin-top:16px;font-size:16px;opacity:.8;}</style>
+</head>
+<body>
+  <h1>Scan WhatsApp QR</h1>
+  ${latestQrDataUrl ? `<img src="${latestQrDataUrl}" alt="WhatsApp QR Code"/>` : '<p>Menunggu QR baru...</p>'}
+  <p class="hint">Reload halaman jika QR belum muncul.</p>
+</body>
+</html>`
+
+    res.writeHead(200, { 'Content-Type': 'text/html' })
+    res.end(html)
+  })
+
+  qrServer.on('error', (err) => {
+    logError('QR HTTP server error', err)
+  })
+
+  qrServer.listen(port, () => {
+    logInfo(`QR page available on http://localhost:${port} (use Railway public URL)`)
+  })
 }
 
 function createClient() {
@@ -117,6 +160,15 @@ function createClient() {
   client.on('qr', qr => {
     logInfo('QR code generated, scan with WhatsApp mobile app')
     qrcode.generate(qr, { small: true })
+
+    QRCode.toDataURL(qr)
+      .then((url) => {
+        latestQrDataUrl = url
+        logInfo('QR image generated for browser preview')
+      })
+      .catch((error) => {
+        logError('Failed to generate QR image', error)
+      })
   })
 
   client.on('ready', () => {
@@ -141,6 +193,10 @@ function createClient() {
       }, 5000)
     }
   })
+
+  if (process.env.PORT || process.env.RAILWAY_ENVIRONMENT) {
+    startQrHttpServer()
+  }
 
   return client
 }
