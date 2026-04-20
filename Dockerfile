@@ -23,6 +23,9 @@ RUN apt-get update && apt-get install -y \
   xdg-utils \
   wget
 
+# Verify Chromium executable path in build logs
+RUN which chromium || true
+
 # Set environment to skip Puppeteer Chromium download
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 

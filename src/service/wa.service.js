@@ -76,7 +76,7 @@ function createClient() {
     }),
     puppeteer: {
       headless: true,
-      executablePath: isRailway ? '/usr/bin/chromium-browser' : undefined, // Use Chromium on Railway
+      executablePath: isRailway ? '/usr/bin/chromium' : undefined, // Use Chromium on Railway
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
