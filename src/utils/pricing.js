@@ -1,33 +1,105 @@
-/**
- * Advanced Dynamic Pricing System for WhatsApp Bot
- * Anti-leak pricing with per-user offsets and controlled reseller margins
- */
+const fs = require('fs').promises
+const path = require('path')
+
+const TRANSACTIONS_FILE = path.resolve(__dirname, '../../database/transactions.json')
+const TRANSACTION_CACHE_TTL_MS = 60 * 1000
+const LOW_DEMAND_PERIOD_MS = 30 * 24 * 60 * 60 * 1000
+const SUCCESSFUL_TRANSACTION_STATUSES = new Set(['success', 'paid', 'completed', 'settled', 'sukses'])
 
 // Constants for pricing rules
 const PRICING_RULES = {
   NORMAL: {
     markup: [
-      { max: 5000, percent: 0.80 },
-      { max: 10000, percent: 0.60 },
-      { max: 20000, percent: 0.30 },
-      { max: Infinity, percent: 0.10 }
+      { max: 5000, percent: 0.82 },
+      { max: 10000, percent: 0.62 },
+      { max: 20000, percent: 0.32 },
+      { max: Infinity, percent: 0.12 }
     ],
-    minProfit: 1000
+    minProfit: 1200
   },
   RESELLER: {
     markup: [
-      { max: 5000, percent: 0.15 },
-      { max: 10000, percent: 0.08 },
-      { max: 20000, percent: 0.04 },
-      { max: Infinity, percent: 0.02 }
+      { max: 5000, percent: 0.17 },
+      { max: 10000, percent: 0.10 },
+      { max: 20000, percent: 0.06 },
+      { max: Infinity, percent: 0.04 }
     ],
-    minProfit: 300
+    minProfit: 400
   }
 }
 
 // Unique code range
-const UNIQUE_CODE_MIN = 99
-const UNIQUE_CODE_MAX = 300
+const UNIQUE_CODE_MIN = 101
+const UNIQUE_CODE_MAX = 404
+
+let transactionCache = []
+let cacheExpiresAt = 0
+
+async function loadTransactionCache() {
+  if (Date.now() < cacheExpiresAt && Array.isArray(transactionCache)) {
+    return transactionCache
+  }
+
+  try {
+    const raw = await fs.readFile(TRANSACTIONS_FILE, 'utf8')
+    const parsed = JSON.parse(raw)
+    transactionCache = Array.isArray(parsed) ? parsed : []
+  } catch (error) {
+    transactionCache = []
+  }
+
+  cacheExpiresAt = Date.now() + TRANSACTION_CACHE_TTL_MS
+  return transactionCache
+}
+
+function isSuccessfulTransactionStatus(status) {
+  if (!status || typeof status !== 'string') return false
+  return SUCCESSFUL_TRANSACTION_STATUSES.has(status.trim().toLowerCase())
+}
+
+function countProductSales(transactions, productId, sinceTimestamp = 0) {
+  return transactions.reduce((count, transaction) => {
+    if (!transaction || Number(transaction.product_id) !== Number(productId)) {
+      return count
+    }
+
+    if (!isSuccessfulTransactionStatus(transaction.status)) {
+      return count
+    }
+
+    const createdAt = Number(transaction.created_at) || 0
+    if (sinceTimestamp && createdAt < sinceTimestamp) {
+      return count
+    }
+
+    return count + 1
+  }, 0)
+}
+
+function getStockAdjustment(stock) {
+  const normalized = Number(stock) || 0
+  if (normalized <= 3) return 0.16
+  if (normalized <= 10) return 0.11
+  if (normalized <= 20) return 0.06
+  return 0
+}
+
+async function getDemandAdjustment(productId) {
+  const transactions = await loadTransactionCache()
+  const count = countProductSales(transactions, productId)
+
+  if (count > 20) return 0.16
+  if (count > 10) return 0.11
+  if (count > 5) return 0.06
+  return 0
+}
+
+async function getLowDemandDiscount(productId) {
+  const transactions = await loadTransactionCache()
+  const sinceTimestamp = Date.now() - LOW_DEMAND_PERIOD_MS
+  const recentCount = countProductSales(transactions, productId, sinceTimestamp)
+  return recentCount === 0 ? -0.06 : 0
+}
 
 /**
  * Generate deterministic user offset from userId (0-500)
@@ -39,17 +111,15 @@ function getUserOffset(userId) {
     return 0
   }
 
-  // Simple hash function for deterministic offset
   let hash = 0
   for (let i = 0; i < userId.length; i++) {
     const char = userId.charCodeAt(i)
     hash = ((hash << 5) - hash) + char
-    hash = hash & hash // Convert to 32-bit integer
+    hash = hash & hash
   }
 
-  // Ensure positive and within range
   const positiveHash = Math.abs(hash)
-  return positiveHash % 501 // 0-500 inclusive
+  return positiveHash % 501
 }
 
 /**
@@ -88,15 +158,15 @@ function roundToNearest100(price) {
 }
 
 /**
- * Calculate final price with markup, profit protection, user offset, and unique code
+ * Calculate final price with markup, dynamic AI adjustments, profit protection, user offset, and unique code
  * @param {number} basePrice - The supplier/base price
  * @param {string} userId - WhatsApp user ID for offset calculation
  * @param {boolean} isReseller - Whether the user is a reseller
- * @returns {object} Detailed pricing breakdown
+ * @param {object} productData - Product metadata { id, stock }
+ * @returns {Promise<object>} Detailed pricing breakdown
  * @throws {Error} If inputs are invalid
  */
-function getFinalPrice(basePrice, userId, isReseller = false) {
-  // Input validation
+async function getFinalPrice(basePrice, userId, isReseller = false, productData = {}) {
   if (basePrice === null || basePrice === undefined) {
     throw new Error('Base price cannot be null or undefined')
   }
@@ -113,50 +183,66 @@ function getFinalPrice(basePrice, userId, isReseller = false) {
     throw new Error('User ID must be a valid string')
   }
 
-  // Get pricing rules
+  const productId = productData && (productData.id || productData.product_id)
+  const stock = productData && Number(productData.stock)
+  if (productId === null || productId === undefined) {
+    throw new Error('Product data must include a valid id')
+  }
+
+  if (typeof stock !== 'number' || isNaN(stock) || stock < 0) {
+    throw new Error('Product data must include a valid stock number')
+  }
+
   const rules = isReseller ? PRICING_RULES.RESELLER : PRICING_RULES.NORMAL
   const markupPercent = getMarkupPercent(basePrice, isReseller)
-
-  // Calculate markup amount
   const markupAmount = Math.ceil(basePrice * markupPercent)
+  const adjustedProfit = Math.max(markupAmount, rules.minProfit)
 
-  // Calculate profit
-  const profit = markupAmount
+  const stockAdjustmentPercent = getStockAdjustment(stock)
+  const demandAdjustmentPercent = await getDemandAdjustment(productId)
+  const lowDemandDiscountPercent = await getLowDemandDiscount(productId)
 
-  // Apply minimum profit protection
-  const minProfit = rules.minProfit
-  const adjustedProfit = Math.max(profit, minProfit)
+  const stockAdjustment = Math.ceil(basePrice * stockAdjustmentPercent)
+  const demandAdjustment = Math.ceil(basePrice * demandAdjustmentPercent)
+  const lowDemandDiscount = Math.ceil(Math.abs(basePrice * lowDemandDiscountPercent))
 
-  // Calculate price with markup
-  const priceWithMarkup = basePrice + adjustedProfit
+  const minimumPrice = basePrice + adjustedProfit
+  const priceBeforeOffset = Math.max(
+    basePrice + adjustedProfit + demandAdjustment + stockAdjustment - lowDemandDiscount,
+    minimumPrice
+  )
 
-  // Add user offset for anti-leak protection
   const userOffset = getUserOffset(userId)
-  const priceWithOffset = priceWithMarkup + userOffset
-
-  // Generate unique code
   const uniqueCode = generateUniqueCode()
-
-  // Final price = price with markup + offset + unique code
-  const finalPrice = priceWithOffset + uniqueCode
-
-  // Optional: Round to nearest 100 for cleaner display
-  const roundedFinalPrice = roundToNearest100(finalPrice)
+  const finalPrice = Math.max(priceBeforeOffset + userOffset + uniqueCode, 0)
 
   return {
     basePrice,
+    isReseller,
     markupPercent,
-    profit: adjustedProfit,
+    markupAmount,
+    adjustedProfit,
+    minProfit: rules.minProfit,
+    minProfitApplied: adjustedProfit > markupAmount,
+    stock,
+    stockAdjustmentPercent,
+    stockAdjustment,
+    demandAdjustmentPercent,
+    demandAdjustment,
+    lowDemandDiscountPercent,
+    lowDemandDiscount,
     userOffset,
     uniqueCode,
-    finalPrice: roundedFinalPrice,
-    isReseller,
-    minProfitApplied: adjustedProfit > profit
+    priceBeforeOffset,
+    finalPrice: Math.round(finalPrice)
   }
 }
 
 module.exports = {
   getFinalPrice,
+  getStockAdjustment,
+  getDemandAdjustment,
+  getLowDemandDiscount,
   getUserOffset,
   PRICING_RULES,
   UNIQUE_CODE_MIN,

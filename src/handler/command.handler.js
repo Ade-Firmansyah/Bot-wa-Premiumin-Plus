@@ -86,11 +86,18 @@ async function stockHandler({ client, msg }) {
 
     let message = `${stockTitle}\n`
     message += `━━━━━━━━━━━━━━━\n\n`
-    availableProducts.forEach(product => {
+    const productPricings = await Promise.all(availableProducts.map(product => {
+      const basePrice = Number(product.price) || 0
+      return getFinalPrice(basePrice, msg.from, isReseller, {
+        id: product.id,
+        stock: Number(product.stock) || 0
+      })
+    }))
+
+    availableProducts.forEach((product, index) => {
+      const pricing = productPricings[index]
       const name = (product.name || 'Produk Premium').toUpperCase()
       const stock = Number(product.stock) || 0
-      const basePrice = Number(product.price) || 0
-      const pricing = getFinalPrice(basePrice, msg.from, isReseller)
       const price = pricing.finalPrice
       const code = product.id || '-'
       message += `📦 ${name} || STOK : ${stock} AKUN\n`
@@ -132,15 +139,20 @@ async function buyHandler({ client, msg }, args) {
 
     const basePrice = Number(product.price) || 0
     const isReseller = resellerService.isReseller(msg.from)
-    const pricing = getFinalPrice(basePrice, msg.from, isReseller)
+    const pricing = await getFinalPrice(basePrice, msg.from, isReseller, {
+      id: product.id,
+      stock: Number(product.stock) || 0
+    })
 
-    const paymentResponse = await payment.createDeposit(API_KEY, pricing.finalPrice)
+    const amount = Math.round(pricing.finalPrice)
+    const paymentResponse = await payment.createDeposit(API_KEY, amount)
     const payData = paymentResponse.data || paymentResponse
     if (!payData || !payData.invoice) {
       throw new Error('Respons pembayaran tidak valid')
     }
 
-    const total = payData.total_bayar || pricing.finalPrice
+    const total = Number(payData.total_bayar) || amount
+    const uniqueCode = payData.kode_unik ? Number(payData.kode_unik) : pricing.uniqueCode
     const invoiceId = `INV-${Date.now()}`
 
     const orderRecord = {
@@ -148,8 +160,8 @@ async function buyHandler({ client, msg }, args) {
       user: msg.from,
       product_id: product.id,
       product_name: product.name,
-      total: total,
-      code: payData.kode_unik || pricing.uniqueCode,
+      total,
+      code: uniqueCode,
       invoice_pay: payData.invoice,
       status: 'WAITING',
       created_at: Date.now(),
@@ -162,7 +174,7 @@ async function buyHandler({ client, msg }, args) {
     const discountText = isReseller ? '\n🎉 *Harga Reseller Applied!*' : ''
 
     const caption =
-`${buildHeader('Tagihan Pembayaran')}\n\n📦 Produk: *${product.name}*\n💰 Total: *Rp ${formatCurrency(total)}*\n📄 Invoice: *${invoiceId}*${discountText}\n\n⚠️ Bayar tepat sesuai nominal\n⏳ Batas waktu: 5 menit\n🔄 Otomatis diproses setelah bayar\n\n*Batal jika ingin membatalkan:*\ncancel ${invoiceId}`
+`${buildHeader('Tagihan Pembayaran')}\n\n📦 Produk: *${product.name}*\n💰 Total: *Rp ${formatCurrency(total)}*\n� Kode unik: *${uniqueCode}*\n�📄 Invoice: *${invoiceId}*${discountText}\n\n⚠️ Bayar tepat sesuai nominal\n⏳ Batas waktu: 5 menit\n🔄 Otomatis diproses setelah bayar\n\n*Batal jika ingin membatalkan:*\ncancel ${invoiceId}`
 
     const media = buildQrMedia(payData.qr_image)
     if (media) {
