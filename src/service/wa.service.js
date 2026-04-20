@@ -68,8 +68,12 @@ function createClient() {
     sessionPath = path.join(SESSION_PATH, `session_${Date.now()}`)
   }
 
+  // Use stable session configuration to prevent random logouts
   const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: sessionPath }),
+    authStrategy: new LocalAuth({
+      clientId: "bot-session",
+      dataPath: "./sessions"
+    }),
     puppeteer: {
       headless: true,
       executablePath: isRailway ? undefined : undefined, // Let Puppeteer find Chrome
@@ -119,20 +123,23 @@ function createClient() {
     logInfo('WhatsApp client ready')
   })
 
-  client.on('auth_failure', failure => {
-    logError('WhatsApp authentication failure', failure)
-    setTimeout(() => {
-      logInfo('Attempting WhatsApp reinitialization after auth failure')
-      client.initialize().catch(err => logError('WhatsApp reinitialize error', err))
-    }, 5000)
+  client.on('auth_failure', (msg) => {
+    logError('WhatsApp authentication failure', { message: msg })
+    // Only log, don't attempt reconnect to avoid loops
   })
 
-  client.on('disconnected', reason => {
-    logError('WhatsApp disconnected', reason)
-    setTimeout(() => {
-      logInfo('Attempting WhatsApp reconnect after disconnect')
-      client.initialize().catch(err => logError('WhatsApp reconnect error', err))
-    }, 5000)
+  client.on('disconnected', (reason) => {
+    if (reason === 'LOGOUT') {
+      logInfo('User logged out from phone - session ended')
+      // Don't reconnect if user logged out
+    } else {
+      logError('WhatsApp disconnected unexpectedly', { reason })
+      // Attempt to reconnect for non-logout disconnections
+      setTimeout(() => {
+        logInfo('Attempting WhatsApp reconnect after unexpected disconnect')
+        client.initialize().catch(err => logError('WhatsApp reconnect error', err))
+      }, 5000)
+    }
   })
 
   return client

@@ -30,24 +30,28 @@ if (global.gc) {
 
 let botClient = null
 let orderWatcherStarted = false
+let isInitializing = false
 
 async function initializeBot() {
+  if (isInitializing) {
+    logInfo('Bot initialization already in progress, skipping')
+    return
+  }
+
+  isInitializing = true
   logInfo('🚀 Starting Premiumin Plus WhatsApp bot')
 
   if (!validateSystem()) {
     logError('System validation failed, aborting startup')
+    isInitializing = false
     return
   }
 
   stopStatusScheduler()
   orderWatcherStarted = false
 
-  // Kill existing browser processes to prevent conflicts (only for local development)
-  if (!process.env.RAILWAY_ENVIRONMENT) {
-    await killExistingBrowsers()
-    // Wait a bit for processes to fully terminate
-    await new Promise(resolve => setTimeout(resolve, 2000))
-  }
+  // For Railway, browser processes are killed in createClient
+  // For local development, we use different session paths to avoid conflicts
 
   botClient = createClient()
 
@@ -61,6 +65,7 @@ async function initializeBot() {
 
   botClient.on('ready', () => {
     logInfo('✅ WhatsApp client ready - initializing services')
+    isInitializing = false
 
     if (!orderWatcherStarted) {
       logInfo('Starting order watcher')
@@ -86,13 +91,18 @@ async function initializeBot() {
     logInfo('Reseller expire checker started')
   })
 
-  botClient.initialize()
+  botClient.initialize().catch(error => {
+    logError('Failed to initialize WhatsApp client', error)
+    isInitializing = false
+    scheduleRestart()
+  })
 }
 
 function scheduleRestart(delay = 5000) {
   logInfo('Scheduling bot restart', { delay })
   stopStatusScheduler()
   orderWatcherStarted = false
+  isInitializing = false
 
   setTimeout(() => {
     try {

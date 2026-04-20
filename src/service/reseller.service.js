@@ -48,6 +48,13 @@ function isReseller(user) {
   return Date.now() < reseller.expired_at
 }
 
+function getUserRole(user) {
+  if (isReseller(user)) {
+    return 'reseller'
+  }
+  return 'user'
+}
+
 function remove(user) {
   const data = loadReseller()
   if (data[user]) {
@@ -95,6 +102,7 @@ module.exports = {
   add,
   get,
   isReseller,
+  getUserRole,
   remove,
   removeExpired,
   getAll

@@ -80,13 +80,17 @@ async function stockHandler({ client, msg }) {
       return client.sendMessage(msg.from, '🔎 Maaf, stok produk belum tersedia saat ini.')
     }
 
-    let message = `📦 *DAFTAR PRODUK TERSEDIA*\n`
+    // Check if user is reseller for anti-leak display
+    const isReseller = resellerService.isReseller(msg.from)
+    const stockTitle = isReseller ? '📦 STOK (RESELLER PRICE)' : '📦 STOK'
+
+    let message = `${stockTitle}\n`
     message += `━━━━━━━━━━━━━━━\n\n`
     availableProducts.forEach(product => {
       const name = (product.name || 'Produk Premium').toUpperCase()
       const stock = Number(product.stock) || 0
       const basePrice = Number(product.price) || 0
-      const pricing = getFinalPrice(basePrice, false) // Show normal price for stock list
+      const pricing = getFinalPrice(basePrice, msg.from, isReseller)
       const price = pricing.finalPrice
       const code = product.id || '-'
       message += `📦 ${name} || STOK : ${stock} AKUN\n`
@@ -128,7 +132,7 @@ async function buyHandler({ client, msg }, args) {
 
     const basePrice = Number(product.price) || 0
     const isReseller = resellerService.isReseller(msg.from)
-    const pricing = getFinalPrice(basePrice, isReseller)
+    const pricing = getFinalPrice(basePrice, msg.from, isReseller)
 
     const paymentResponse = await payment.createDeposit(API_KEY, pricing.finalPrice)
     const payData = paymentResponse.data || paymentResponse

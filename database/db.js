@@ -24,7 +24,17 @@ function readTransactionsWithCache() {
     return transactionCache
   } catch (error) {
     console.error('Error reading transactions:', error)
-    return []
+    // Try to recreate corrupted file
+    try {
+      fs.writeFileSync(TRANSACTIONS_FILE, '[]')
+      transactionCache = []
+      cacheTimestamp = now
+      console.log('Recreated corrupted transactions file')
+      return transactionCache
+    } catch (recoveryError) {
+      console.error('Failed to recover transactions file:', recoveryError)
+      return []
+    }
   }
 }
 
