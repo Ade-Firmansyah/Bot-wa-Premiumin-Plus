@@ -3,7 +3,23 @@ const { handleIncomingMessage } = require('./handler/message.handler')
 const { startOrderWatcher } = require('./handler/order.handler')
 const { startScheduler: startStatusScheduler, stopScheduler: stopStatusScheduler } = require('./service/status.service')
 const { validateSystem } = require('./utils/validator')
+const resellerService = require('./service/reseller.service')
 const { logInfo, logError } = require('./utils/logger')
+
+// Global error handlers
+process.on('uncaughtException', (error) => {
+  logError('Uncaught Exception', { error: error.message, stack: error.stack })
+  process.exit(1)
+})
+
+process.on('unhandledRejection', (reason, promise) => {
+  logError('Unhandled Rejection', { reason: reason?.message || reason, promise })
+  // Don't exit, just log
+})
+
+process.on('warning', (warning) => {
+  logError('Process Warning', { warning: warning.message, stack: warning.stack })
+})
 
 // Enable aggressive garbage collection for memory optimization
 if (global.gc) {
@@ -47,6 +63,20 @@ function initializeBot() {
 
     logInfo('Starting status scheduler')
     startStatusScheduler(botClient)
+
+    // Start reseller expire checker
+    setInterval(() => {
+      try {
+        resellerService.removeExpired(botClient)
+      } catch (error) {
+        logError('Reseller expire check failed', {
+          error: error.message,
+          stack: error.stack
+        })
+      }
+    }, 60 * 60 * 1000) // Check every hour
+
+    logInfo('Reseller expire checker started')
   })
 
   botClient.initialize()

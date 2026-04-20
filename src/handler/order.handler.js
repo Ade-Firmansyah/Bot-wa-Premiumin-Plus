@@ -29,9 +29,18 @@ async function processPendingOrders(client) {
           await client.sendMessage(order.user, `⏳ Pesanan ${order.invoice} kedaluwarsa. Silakan buat ulang jika masih ingin membeli.`)
         }
       } catch (error) {
-        logError('Payment check failed', { invoice: order.invoice, error: error.message })
+        logError('Payment check failed', {
+          invoice: order.invoice,
+          error: error.message,
+          stack: error.stack
+        })
       }
     }
+  } catch (error) {
+    logError('Process pending orders failed', {
+      error: error.message,
+      stack: error.stack
+    })
   } finally {
     isProcessingOrders = false
   }
@@ -43,41 +52,58 @@ async function fulfillOrder(client, order) {
     return
   }
 
-  const orderResponse = await premku.createOrder(API_KEY, order.product_id, 1, order.invoice)
-  if (!orderResponse.success) {
-    logError('Premku order creation failed', { invoice: order.invoice, response: orderResponse })
-    return
-  }
-
-  const statusResponse = await premku.checkOrder(API_KEY, orderResponse.invoice)
-  if (statusResponse.status !== 'success' || !Array.isArray(statusResponse.accounts) || !statusResponse.accounts.length) {
-    logInfo('Order not ready yet', { invoice: order.invoice, status: statusResponse.status })
-    return
-  }
-
-  const account = statusResponse.accounts[0]
-  const [password, ...noteParts] = (account.password || '').split(' - ')
-  const note = noteParts.filter(Boolean).join(' - ')
-
   try {
-    if (order.qr_message_id && typeof client.deleteMessage === 'function') {
-      await client.deleteMessage(order.user, order.qr_message_id, false)
+    const orderResponse = await premku.createOrder(API_KEY, order.product_id, 1, order.invoice)
+    if (!orderResponse.success) {
+      logError('Premku order creation failed', {
+        invoice: order.invoice,
+        response: orderResponse
+      })
+      return
     }
-  } catch (deleteError) {
-    logError('Failed to remove QR message', { invoice: order.invoice, error: deleteError.message })
-  }
 
-  const successMessage =
+    const statusResponse = await premku.checkOrder(API_KEY, orderResponse.invoice)
+    if (statusResponse.status !== 'success' || !Array.isArray(statusResponse.accounts) || !statusResponse.accounts.length) {
+      logInfo('Order not ready yet', { invoice: order.invoice, status: statusResponse.status })
+      return
+    }
+
+    const account = statusResponse.accounts[0]
+    const [password, ...noteParts] = (account.password || '').split(' - ')
+    const note = noteParts.filter(Boolean).join(' - ')
+
+    try {
+      if (order.qr_message_id && typeof client.deleteMessage === 'function') {
+        await client.deleteMessage(order.user, order.qr_message_id, false)
+      }
+    } catch (deleteError) {
+      logError('Failed to remove QR message', {
+        invoice: order.invoice,
+        error: deleteError.message
+      })
+    }
+
+    const successMessage =
 `✅ *PEMBAYARAN BERHASIL*\n\n📦 Produk: *${order.product_name}*\n💰 Total: Rp *${formatCurrency(order.total)}*\n\n📧 Username: ${account.username}\n🔑 Password: ${password || '-'}\n${note ? `\n📝 Catatan: ${note}` : ''}\n\n📄 Invoice: *${order.invoice}*\n\nTerima kasih telah menggunakan *Premiumin Plus* 🚀`
 
-  try {
-    await client.sendMessage(order.user, successMessage)
-    db.updateOrder(order.invoice, { status: 'SUCCESS' })
-    logInfo('Order fulfilled', { invoice: order.invoice })
-  } catch (sendError) {
-    logError('Failed to send success message', { invoice: order.invoice, error: sendError.message })
-    // Still mark as success since account was delivered
-    db.updateOrder(order.invoice, { status: 'SUCCESS' })
+    try {
+      await client.sendMessage(order.user, successMessage)
+      db.updateOrder(order.invoice, { status: 'SUCCESS' })
+      logInfo('Order fulfilled', { invoice: order.invoice })
+    } catch (sendError) {
+      logError('Failed to send success message', {
+        invoice: order.invoice,
+        error: sendError.message
+      })
+      // Still mark as success since account was delivered
+      db.updateOrder(order.invoice, { status: 'SUCCESS' })
+    }
+  } catch (error) {
+    logError('Fulfill order failed', {
+      invoice: order.invoice,
+      error: error.message,
+      stack: error.stack
+    })
   }
 }
 

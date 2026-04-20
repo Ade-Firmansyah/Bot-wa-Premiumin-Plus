@@ -2,7 +2,7 @@ const { enqueue } = require('../utils/queue')
 const { handleCommand } = require('./command.handler')
 const { logInfo } = require('../utils/logger')
 
-const ALLOWED_COMMANDS = ['menu', 'help', 'stok', 'stock', 'buy', 'admin', 'ping', 'p', 'cek', 'cancel', 'testpay', 'reseller', 'website', 'halo', 'test', 'assalamualaikum']
+const ALLOWED_COMMANDS = ['menu', 'help', 'stok', 'stock', 'buy', 'admin', 'ping', 'p', 'cek', 'cancel', 'testpay', 'reseller', 'gabung', 'website', 'halo', 'test', 'assalamualaikum']
 
 function isValidCommand(text) {
   const normalized = String(text).toLowerCase().trim()
