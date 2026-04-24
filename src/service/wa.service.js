@@ -146,6 +146,14 @@ function createClient() {
         '--disable-web-resources',
         '--disable-component-extensions-with-background-pages',
         '--disable-component-update',
+        '--disable-background-networking', // Optimasi: kurangi background networking
+        '--disable-background-timer-throttling', // Optimasi: kurangi throttling untuk memory
+        '--memory-pressure-off', // Optimasi: matikan memory pressure handling
+        '--max_old_space_size=512', // Optimasi: batasi heap size untuk stability
+        '--optimize-for-size', // Optimasi: optimasi untuk ukuran kecil
+        '--disable-logging', // Optimasi: disable logging untuk performa
+        '--disable-dev-tools', // Optimasi: disable dev tools
+        '--disable-software-rasterizer', // Optimasi: disable software rasterizer
         ...(isRailway ? [
           '--disable-background-timer-throttling',
           '--disable-renderer-backgrounding',

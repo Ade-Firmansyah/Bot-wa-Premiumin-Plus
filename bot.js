@@ -11,7 +11,19 @@ const PUPPETEER_ARGS = [
   '--disable-dev-shm-usage',
   '--disable-gpu',
   '--disable-web-security',
-  '--disable-features=VizDisplayCompositor'
+  '--disable-features=VizDisplayCompositor',
+  // Optimasi tambahan untuk memory dan performa
+  '--disable-background-networking',
+  '--disable-extensions',
+  '--disable-sync',
+  '--disable-default-apps',
+  '--disable-renderer-backgrounding',
+  '--memory-pressure-off',
+  '--max_old_space_size=512',
+  '--optimize-for-size',
+  '--disable-logging',
+  '--disable-dev-tools',
+  '--single-process'
 ];
 
 const RECONNECT_DELAY = 5000; // 5 seconds
@@ -36,6 +48,10 @@ let heartbeatInterval;
 function log(level, message, data = {}) {
   const timestamp = new Date().toISOString();
   const logMessage = `[${timestamp}] [${level.toUpperCase()}] ${message}`;
+  // Optimasi: kurangi console output di production untuk performa
+  if (process.env.NODE_ENV === 'production' && level === 'info' && !message.includes('ready') && !message.includes('error')) {
+    return; // Skip non-critical info logs
+  }
   console.log(logMessage);
   if (Object.keys(data).length > 0) {
     console.log(JSON.stringify(data, null, 2));
@@ -194,6 +210,9 @@ Available commands:
 • *menu* / *help* - Show this menu
 • *status* - Bot information
 • *apikey* - Check API key status
+• *system* - System information
+• *railway* - Railway deployment info
+• *performance* - Performance metrics
 
 _Type a command to interact with the bot_`);
       break;
@@ -219,6 +238,78 @@ _Type a command to interact with the bot_`);
 • API Key: Online ✅
 • Authentication: Active
 • Last Check: ${new Date().toLocaleString()}`);
+      break;
+
+    case 'system':
+      const systemInfo = {
+        platform: process.platform,
+        arch: process.arch,
+        nodeVersion: process.version,
+        totalMemory: `${Math.round(require('os').totalmem() / 1024 / 1024 / 1024)}GB`,
+        freeMemory: `${Math.round(require('os').freemem() / 1024 / 1024 / 1024)}GB`,
+        cpuCount: require('os').cpus().length,
+        hostname: require('os').hostname(),
+        environment: process.env.NODE_ENV || 'development'
+      };
+
+      await addToQueue(msg.from, `*🖥️ System Information*
+
+• Platform: ${systemInfo.platform}
+• Architecture: ${systemInfo.arch}
+• Node.js: ${systemInfo.nodeVersion}
+• Total RAM: ${systemInfo.totalMemory}
+• Free RAM: ${systemInfo.freeMemory}
+• CPU Cores: ${systemInfo.cpuCount}
+• Hostname: ${systemInfo.hostname}
+• Environment: ${systemInfo.environment}`);
+      break;
+
+    case 'railway':
+      const railwayInfo = {
+        deployment: process.env.RAILWAY_ENVIRONMENT_NAME || 'Local Development',
+        project: process.env.RAILWAY_PROJECT_NAME || 'Unknown',
+        service: process.env.RAILWAY_SERVICE_NAME || 'Unknown',
+        region: process.env.RAILWAY_REGION || 'Unknown',
+        publicDomain: process.env.RAILWAY_PUBLIC_DOMAIN || 'Not Available',
+        privateDomain: process.env.RAILWAY_PRIVATE_DOMAIN || 'Not Available',
+        port: process.env.PORT || '3000'
+      };
+
+      await addToQueue(msg.from, `*🚂 Railway Deployment Info*
+
+• Environment: ${railwayInfo.deployment}
+• Project: ${railwayInfo.project}
+• Service: ${railwayInfo.service}
+• Region: ${railwayInfo.region}
+• Public Domain: ${railwayInfo.publicDomain}
+• Private Domain: ${railwayInfo.privateDomain}
+• Port: ${railwayInfo.port}
+• Health Check: http://localhost:${railwayInfo.port}/health`);
+      break;
+
+    case 'performance':
+      const perfData = process.memoryUsage();
+      const performance = {
+        rss: `${Math.round(perfData.rss / 1024 / 1024)}MB`,
+        heapTotal: `${Math.round(perfData.heapTotal / 1024 / 1024)}MB`,
+        heapUsed: `${Math.round(perfData.heapUsed / 1024 / 1024)}MB`,
+        external: `${Math.round(perfData.external / 1024 / 1024)}MB`,
+        uptime: `${Math.floor(process.uptime())}s`,
+        pid: process.pid,
+        queueLength: messageQueue.length,
+        activeCooldowns: userCooldowns.size
+      };
+
+      await addToQueue(msg.from, `*⚡ Performance Metrics*
+
+• RSS Memory: ${performance.rss}
+• Heap Total: ${performance.heapTotal}
+• Heap Used: ${performance.heapUsed}
+• External Memory: ${performance.external}
+• Uptime: ${performance.uptime}
+• Process ID: ${performance.pid}
+• Message Queue: ${performance.queueLength}
+• Active Cooldowns: ${performance.activeCooldowns}`);
       break;
 
     default:

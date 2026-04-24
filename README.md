@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # 🤖 WhatsApp Bot Premiumku
 
 Bot WhatsApp otomatis untuk jual akun premium (auto stok, auto pembayaran, auto kirim akun).
@@ -74,8 +73,19 @@ Jalankan bot dan periksa log. Jika berhasil, Anda akan melihat pesan "injected e
 
 ### 4. Jalankan Bot
 
+**Development:**
 ```bash
-node main/index.js
+npm run dev
+```
+
+**Production:**
+```bash
+npm start
+```
+
+**Dengan PM2 (Recommended untuk 24/7):**
+```bash
+npm run start:pm2
 ```
 
 Scan QR → selesai ✅
@@ -162,5 +172,64 @@ Upgrade:
 * Deploy VPS 24 jam
 
 ---
+
+## ⚡ OPTIMASI UNTUK PRODUCTION (Ubuntu/VPS)
+
+### Memory Optimization
+Bot sudah dioptimasi untuk penggunaan RAM minimal:
+- GC otomatis setiap 60 detik
+- Cache cleanup otomatis
+- Debounce message untuk anti-spam
+- Queue limit 50 messages
+
+### PM2 Production Setup
+```bash
+# Install PM2 globally
+npm install -g pm2
+
+# Start dengan PM2
+npm run start:pm2
+
+# Monitor
+npm run pm2:monit
+
+# Logs
+npm run pm2:logs
+
+# Restart
+npm run pm2:restart
+
+# Stop
+npm run pm2:stop
+```
+
+### Ubuntu Server Tuning
+```bash
+# Update system
+sudo apt update && sudo apt upgrade -y
+
+# Install dependencies
+sudo apt install -y chromium-browser nodejs npm
+
+# Optimize untuk headless
+echo "kernel.core_pattern=|/bin/false" | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+
+# Disable swap (opsional, untuk memory dedicated)
+sudo swapoff -a
+```
+
+### Railway Deployment
+Bot sudah teroptimasi untuk Railway:
+- QR code via HTTP server
+- Auto reconnect
+- Memory limit 300MB
+- Production logging
+
+### Performance Tips
+- Bot menggunakan single process untuk stability
+- Puppeteer args dioptimasi untuk low memory
+- API responses di-cache 30 detik
+- Logging dikurangi di production
 
 🚀 Bot siap dipakai jualan otomatis

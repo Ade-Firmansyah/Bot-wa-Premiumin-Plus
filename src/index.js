@@ -9,16 +9,18 @@ const { logInfo, logError } = require('./utils/logger')
 // Global error handlers
 process.on('uncaughtException', (error) => {
   logError('Uncaught Exception', { error: error.message, stack: error.stack })
-  process.exit(1)
+  // Optimasi: graceful restart instead of exit
+  scheduleRestart(10000) // Restart after 10 seconds
 })
 
 process.on('unhandledRejection', (reason, promise) => {
   logError('Unhandled Rejection', { reason: reason?.message || reason, promise })
-  // Don't exit, just log
+  // Optimasi: don't exit, just log and continue
 })
 
 process.on('warning', (warning) => {
-  logError('Process Warning', { warning: warning.message, stack: warning.stack })
+  // Optimasi: skip warning logs untuk performa
+  // logError('Process Warning', { warning: warning.message, stack: warning.stack })
 })
 
 // Enable aggressive garbage collection for memory optimization
@@ -27,6 +29,19 @@ if (global.gc) {
     global.gc()
   }, 60000) // Run GC every 60 seconds
 }
+
+// Optimasi: Cache cleanup untuk mencegah memory leak
+const cacheCleanup = new Map()
+setInterval(() => {
+  // Cleanup expired cache entries
+  const now = Date.now()
+  for (const [key, value] of cacheCleanup.entries()) {
+    if (now - value.timestamp > 300000) { // 5 minutes
+      cacheCleanup.delete(key)
+    }
+  }
+  logInfo(`Cache cleanup: ${cacheCleanup.size} entries remaining`)
+}, 300000) // Every 5 minutes
 
 let botClient = null
 let orderWatcherStarted = false

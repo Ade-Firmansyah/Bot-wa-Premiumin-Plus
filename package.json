@@ -4,10 +4,16 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "node bot.js",
-    "start:gc": "node --expose-gc bot.js",
-    "dev": "node --expose-gc --inspect bot.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js",
+    "start:pm2": "pm2 start ecosystem.config.js --env production",
+    "start:gc": "node --expose-gc index.js",
+    "dev": "node --expose-gc --inspect index.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "pm2:stop": "pm2 stop ecosystem.config.js",
+    "pm2:restart": "pm2 restart ecosystem.config.js",
+    "pm2:delete": "pm2 delete ecosystem.config.js",
+    "pm2:logs": "pm2 logs wa-bot-premiuminplus",
+    "pm2:monit": "pm2 monit"
   },
   "keywords": [],
   "author": "",
