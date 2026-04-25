@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-# 🤖 WhatsApp Bot Premiumku
-=======
 # 🤖 WhatsApp Bot Premiumin Plus
->>>>>>> 91481e4 (Fix: Critical bot initialization issues and Railway deployment preparation)
 
 Bot WhatsApp otomatis untuk jual akun premium (auto stok, auto pembayaran, auto kirim akun).
 
