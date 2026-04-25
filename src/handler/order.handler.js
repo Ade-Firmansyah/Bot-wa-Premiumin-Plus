@@ -18,6 +18,11 @@ async function processPendingOrders(client) {
 
     for (const order of orders) {
       try {
+        // Skip orders that are already being processed
+        if (order.status === 'ORDER_CREATED') {
+          continue
+        }
+
         const paymentStatus = await payment.checkDeposit(API_KEY, order.invoice_pay)
         const status = paymentStatus.data?.status || paymentStatus.status || ''
         logInfo('Checking payment status', { invoice: order.invoice, status })
@@ -53,6 +58,7 @@ async function fulfillOrder(client, order) {
   }
 
   try {
+    // Step 1: Create order via Premku API
     const orderResponse = await premku.createOrder(API_KEY, order.product_id, 1, order.invoice)
     if (!orderResponse.success) {
       logError('Premku order creation failed', {
@@ -62,48 +68,108 @@ async function fulfillOrder(client, order) {
       return
     }
 
-    const statusResponse = await premku.checkOrder(API_KEY, orderResponse.invoice)
-    if (statusResponse.status !== 'success' || !Array.isArray(statusResponse.accounts) || !statusResponse.accounts.length) {
-      logInfo('Order not ready yet', { invoice: order.invoice, status: statusResponse.status })
-      return
-    }
+    // Update order with Premku invoice
+    db.updateOrder(order.invoice, {
+      premku_invoice: orderResponse.invoice,
+      status: 'ORDER_CREATED'
+    })
 
-    const account = statusResponse.accounts[0]
-    const [password, ...noteParts] = (account.password || '').split(' - ')
-    const note = noteParts.filter(Boolean).join(' - ')
+    logInfo('Order created in Premku', {
+      invoice: order.invoice,
+      premku_invoice: orderResponse.invoice
+    })
 
-    try {
-      if (order.qr_message_id && typeof client.deleteMessage === 'function') {
-        await client.deleteMessage(order.user, order.qr_message_id, false)
-      }
-    } catch (deleteError) {
-      logError('Failed to remove QR message', {
-        invoice: order.invoice,
-        error: deleteError.message
-      })
-    }
+    // Step 2: Check order status until ready (with retry logic)
+    await checkOrderStatusUntilReady(client, order.invoice, orderResponse.invoice, order)
 
-    const successMessage =
-`✅ *PEMBAYARAN BERHASIL*\n\n📦 Produk: *${order.product_name}*\n💰 Total: Rp *${formatCurrency(order.total)}*\n\n📧 Username: ${account.username}\n🔑 Password: ${password || '-'}\n${note ? `\n📝 Catatan: ${note}` : ''}\n\n📄 Invoice: *${order.invoice}*\n\nTerima kasih telah menggunakan *Premiumin Plus* 🚀`
-
-    try {
-      await client.sendMessage(order.user, successMessage)
-      db.updateOrder(order.invoice, { status: 'SUCCESS' })
-      logInfo('Order fulfilled', { invoice: order.invoice })
-    } catch (sendError) {
-      logError('Failed to send success message', {
-        invoice: order.invoice,
-        error: sendError.message
-      })
-      // Still mark as success since account was delivered
-      db.updateOrder(order.invoice, { status: 'SUCCESS' })
-    }
   } catch (error) {
     logError('Fulfill order failed', {
       invoice: order.invoice,
       error: error.message,
       stack: error.stack
     })
+  }
+}
+
+async function checkOrderStatusUntilReady(client, localInvoice, premkuInvoice, order, attempts = 0) {
+  const MAX_ATTEMPTS = 20 // Check for up to ~5 minutes (20 * 15s)
+  const CHECK_INTERVAL = 15000 // 15 seconds
+
+  if (attempts >= MAX_ATTEMPTS) {
+    logError('Order status check timeout', { invoice: localInvoice, premku_invoice: premkuInvoice })
+    await client.sendMessage(order.user, `⏳ Pesanan ${localInvoice} sedang diproses. Jika belum menerima akun dalam 10 menit, hubungi admin.`)
+    return
+  }
+
+  try {
+    const statusResponse = await premku.checkOrder(API_KEY, premkuInvoice)
+
+    if (statusResponse.success && statusResponse.status === 'success' &&
+        Array.isArray(statusResponse.accounts) && statusResponse.accounts.length > 0) {
+
+      // Order is ready, send account data
+      await sendAccountData(client, localInvoice, order, statusResponse.accounts[0])
+      return
+    }
+
+    // Order not ready yet, schedule next check
+    logInfo('Order not ready yet, will check again', {
+      invoice: localInvoice,
+      premku_invoice: premkuInvoice,
+      status: statusResponse.status,
+      attempt: attempts + 1
+    })
+
+    setTimeout(() => {
+      checkOrderStatusUntilReady(client, localInvoice, premkuInvoice, order, attempts + 1)
+    }, CHECK_INTERVAL)
+
+  } catch (error) {
+    logError('Order status check failed', {
+      invoice: localInvoice,
+      premku_invoice: premkuInvoice,
+      error: error.message,
+      attempt: attempts + 1
+    })
+
+    // Retry after error
+    setTimeout(() => {
+      checkOrderStatusUntilReady(client, localInvoice, premkuInvoice, order, attempts + 1)
+    }, CHECK_INTERVAL)
+  }
+}
+
+async function sendAccountData(client, invoice, order, account) {
+  try {
+    // Delete QR message if exists
+    if (order.qr_message_id && typeof client.deleteMessage === 'function') {
+      await client.deleteMessage(order.user, order.qr_message_id, false)
+    }
+  } catch (deleteError) {
+    logError('Failed to remove QR message', {
+      invoice: invoice,
+      error: deleteError.message
+    })
+  }
+
+  // Parse password and notes
+  const [password, ...noteParts] = (account.password || '').split(' - ')
+  const note = noteParts.filter(Boolean).join(' - ')
+
+  const successMessage =
+`✅ *PEMBAYARAN BERHASIL*\n\n📦 Produk: *${order.product_name}*\n💰 Total: Rp *${formatCurrency(order.total)}*\n\n📧 Username: ${account.username}\n🔑 Password: ${password || '-'}\n${note ? `\n📝 Catatan: ${note}` : ''}\n\n📄 Invoice: *${invoice}*\n\nTerima kasih telah menggunakan *Premiumin Plus* 🚀`
+
+  try {
+    await client.sendMessage(order.user, successMessage)
+    db.updateOrder(invoice, { status: 'SUCCESS' })
+    logInfo('Order fulfilled successfully', { invoice: invoice })
+  } catch (sendError) {
+    logError('Failed to send success message', {
+      invoice: invoice,
+      error: sendError.message
+    })
+    // Still mark as success since account was delivered
+    db.updateOrder(invoice, { status: 'SUCCESS' })
   }
 }
 
@@ -115,7 +181,12 @@ async function expireOldOrders(client) {
     const now = Date.now()
 
     for (const order of orders) {
-      if (now - order.created_at > 5 * 60 * 1000) {
+      // Don't expire orders that are already being processed
+      if (order.status === 'ORDER_CREATED') {
+        continue
+      }
+
+      if (now - order.created_at > 5 * 60 * 1000) { // 5 minutes
         db.updateOrder(order.invoice, { status: 'EXPIRED' })
         await client.sendMessage(order.user, `⏳ Waktu pembayaran untuk ${order.invoice} telah berakhir. Silakan buat kembali jika masih ingin membeli.`)
         logInfo('Order expired due timeout', { invoice: order.invoice })

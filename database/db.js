@@ -76,7 +76,9 @@ function updateOrder(invoice, updates) {
 
 function getActiveOrders() {
   const transactions = readTransactions()
-  return transactions.filter(order => order.status === 'WAITING')
+  return transactions.filter(order =>
+    order.status === 'WAITING' || order.status === 'ORDER_CREATED'
+  )
 }
 
 function getOrder(invoice) {

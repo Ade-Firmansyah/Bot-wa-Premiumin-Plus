@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 # 🤖 WhatsApp Bot Premiumku
+=======
+# 🤖 WhatsApp Bot Premiumin Plus
+>>>>>>> 91481e4 (Fix: Critical bot initialization issues and Railway deployment preparation)
 
 Bot WhatsApp otomatis untuk jual akun premium (auto stok, auto pembayaran, auto kirim akun).
 
@@ -98,6 +102,8 @@ Scan QR → selesai ✅
 * `menu` → menu utama
 * `stok` → lihat produk
 * `buy [id]` → beli produk
+* `status [invoice]` → cek status pembayaran
+* `cancel [invoice]` → batalkan pembayaran
 
 Contoh:
 
@@ -233,3 +239,53 @@ Bot sudah teroptimasi untuk Railway:
 - Logging dikurangi di production
 
 🚀 Bot siap dipakai jualan otomatis
+
+---
+
+## 🚂 DEPLOY KE RAILWAY
+
+### Prasyarat:
+* GitHub account
+* Railway account (https://railway.app)
+* Git installed
+
+### Langkah Deploy:
+
+1. **Push ke GitHub:**
+```bash
+git add .
+git commit -m "Ready for Railway deployment"
+git push origin main
+```
+
+2. **Login ke Railway dan Buat Project:**
+   - Buka https://railway.app
+   - Klik "Create New Project"
+   - Pilih "Deploy from GitHub"
+   - Pilih repository ini
+
+3. **Set Environment Variables di Railway:**
+   - Di Railway dashboard → Variables
+   - Tambahkan:
+     - `API_KEY`: (API key dari Premku)
+     - `CRYPTO_SECRET`: (dari .env)
+     - `ENCRYPTED_API_KEY`: (dari .env, jika menggunakan enkripsi)
+     - `PORT`: (Railway akan auto-set, default 3000)
+
+4. **Deploy:**
+   - Railway akan auto-deploy saat ada push ke GitHub
+   - Tunggu hingga status "UP"
+   - Akses QR via public URL yang diberikan Railway
+
+### Testing Deployment:
+- Railway akan menampilkan URL publik saat deployment selesai
+- Buka URL untuk melihat halaman QR WhatsApp
+- Scan dengan WhatsApp mobile Anda
+- Bot siap menerima pesan
+
+### Troubleshooting:
+- Jika QR tidak muncul: tunggu beberapa detik, refresh halaman
+- Jika bot disconnect: Railway akan auto-restart
+- Check logs di Railway dashboard untuk error details
+
+---

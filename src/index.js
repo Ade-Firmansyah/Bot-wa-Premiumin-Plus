@@ -9,6 +9,7 @@ const { logInfo, logError } = require('./utils/logger')
 // Global error handlers
 process.on('uncaughtException', (error) => {
   logError('Uncaught Exception', { error: error.message, stack: error.stack })
+<<<<<<< HEAD
   // Optimasi: graceful restart instead of exit
   scheduleRestart(10000) // Restart after 10 seconds
 })
@@ -16,6 +17,15 @@ process.on('uncaughtException', (error) => {
 process.on('unhandledRejection', (reason, promise) => {
   logError('Unhandled Rejection', { reason: reason?.message || reason, promise })
   // Optimasi: don't exit, just log and continue
+=======
+  // Attempt restart instead of immediate exit
+  setTimeout(() => scheduleRestart(), 3000)
+})
+
+process.on('unhandledRejection', (reason, promise) => {
+  logError('Unhandled Rejection', { reason: reason?.message || reason })
+  // Don't exit, just log
+>>>>>>> 91481e4 (Fix: Critical bot initialization issues and Railway deployment preparation)
 })
 
 process.on('warning', (warning) => {
@@ -129,14 +139,5 @@ function scheduleRestart(delay = 5000) {
   }, delay)
 }
 
-process.on('uncaughtException', error => {
-  logError('Uncaught exception', error)
-  scheduleRestart()
-})
-
-process.on('unhandledRejection', error => {
-  logError('Unhandled rejection', error)
-  scheduleRestart()
-})
-
+// Start the bot
 initializeBot()

@@ -25,7 +25,7 @@ async function greetingHandler({ client, msg }) {
 
 async function menuHandler({ client, msg }) {
   return client.sendMessage(msg.from,
-`${buildHeader('Menu Premiumin Plus')}\n📌 _Panduan singkat penggunaan bot_\n\n• *STOK* → daftar produk ready\n• *BUY <id>* atau *BUY<id>* → mulai transaksi\n• *CANCEL INV-...* → batalkan pembayaran\n• *ADMIN* → kontak admin cepat\n• *RESELLER* → info paket reseller\n`)
+`${buildHeader('Menu Premiumin Plus')}\n📌 _Panduan singkat penggunaan bot_\n\n• *STOK* → daftar produk ready\n• *BUY <id>* atau *BUY<id>* → mulai transaksi\n• *STATUS <invoice>* → cek status pembayaran\n• *CANCEL <invoice>* → batalkan pembayaran\n• *ADMIN* → kontak admin cepat\n• *RESELLER* → info paket reseller\n`)
 }
 
 async function adminHandler({ client, msg }) {
@@ -174,7 +174,7 @@ async function buyHandler({ client, msg }, args) {
     const discountText = isReseller ? '\n🎉 *Harga Reseller Applied!*' : ''
 
     const caption =
-`${buildHeader('Tagihan Pembayaran')}\n\n📦 Produk: *${product.name}*\n💰 Total: *Rp ${formatCurrency(total)}*\n� Kode unik: *${uniqueCode}*\n�📄 Invoice: *${invoiceId}*${discountText}\n\n⚠️ Bayar tepat sesuai nominal\n⏳ Batas waktu: 5 menit\n🔄 Otomatis diproses setelah bayar\n\n*Batal jika ingin membatalkan:*\ncancel ${invoiceId}`
+`${buildHeader('Tagihan Pembayaran')}\n\n📦 Produk: *${product.name}*\n💰 Total: *Rp ${formatCurrency(total)}*\n🔢 Kode unik: *${uniqueCode}*\n📄 Invoice: *${invoiceId}*${discountText}\n\n⚠️ *BAYAR TEPAT SESUAI NOMINAL*\n⏳ Batas waktu: 5 menit\n🔄 *Otomatis diproses setelah bayar*\n\n💡 *Proses otomatis:*\n1️⃣ Bayar QRIS di atas\n2️⃣ Tunggu konfirmasi pembayaran\n3️⃣ Akun dikirim otomatis\n\n*Batal jika ingin membatalkan:*\n*cancel ${invoiceId}*`
 
     const media = buildQrMedia(payData.qr_image)
     if (media) {
@@ -222,6 +222,51 @@ async function cancelHandler({ client, msg }, args) {
   } catch (error) {
     logError('Cancel handler failed', error)
     return client.sendMessage(msg.from, `❌ Gagal membatalkan pesanan: ${error.message}`)
+  }
+}
+
+async function statusHandler({ client, msg }, args) {
+  const invoice = args[0] ? args[0].toString().trim().toUpperCase() : null
+  if (!invoice || !invoice.startsWith('INV-')) {
+    return client.sendMessage(msg.from, '❌ Format status salah. Gunakan: *status INV-123456789*')
+  }
+
+  try {
+    const order = db.getOrder(invoice)
+    if (!order) {
+      return client.sendMessage(msg.from, `❌ Invoice ${invoice} tidak ditemukan.`)
+    }
+
+    if (order.user !== msg.from) {
+      return client.sendMessage(msg.from, '❌ Anda tidak memiliki akses ke invoice ini.')
+    }
+
+    let statusMessage = `📄 *STATUS PEMBAYARAN*\n\n📦 Invoice: *${invoice}*\n📦 Produk: *${order.product_name}*\n💰 Total: *Rp ${formatCurrency(order.total)}*\n`
+
+    switch (order.status) {
+      case 'WAITING':
+        statusMessage += `⏳ Status: *Menunggu Pembayaran*\n\n💳 Silakan bayar QRIS yang dikirim sebelumnya.\n⏰ Sisa waktu: ${Math.max(0, Math.floor((5 * 60 * 1000 - (Date.now() - order.created_at)) / 1000 / 60))} menit`
+        break
+      case 'ORDER_CREATED':
+        statusMessage += `🔄 Status: *Pembayaran Diterima*\n\n⚙️ Sedang memproses pesanan...\n⏳ Akun akan dikirim otomatis dalam beberapa menit.`
+        break
+      case 'SUCCESS':
+        statusMessage += `✅ Status: *SELESAI*\n\n📧 Akun sudah dikirim ke chat ini.`
+        break
+      case 'EXPIRED':
+        statusMessage += `⏰ Status: *KEDALUWARSA*\n\n❌ Waktu pembayaran habis. Buat pesanan baru jika masih ingin membeli.`
+        break
+      case 'CANCELLED':
+        statusMessage += `❌ Status: *DIBATALKAN*\n\n📞 Hubungi admin jika ada pertanyaan.`
+        break
+      default:
+        statusMessage += `❓ Status: *${order.status}*`
+    }
+
+    return client.sendMessage(msg.from, statusMessage)
+  } catch (error) {
+    logError('Status check failed', error)
+    return client.sendMessage(msg.from, '❌ Gagal mengecek status. Silakan coba lagi.')
   }
 }
 
@@ -407,6 +452,7 @@ const route = createRouter({
   stock: stockHandler,
   buy: buyHandler,
   cancel: cancelHandler,
+  status: statusHandler,
   testpay: testPayHandler,
   admin: adminHandler,
   website: websiteHandler,

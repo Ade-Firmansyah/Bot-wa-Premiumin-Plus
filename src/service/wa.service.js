@@ -103,11 +103,10 @@ function createClient() {
     killExistingBrowsers()
   }
 
-  // For local development, always use unique session path to avoid conflicts
+  // For Railway, browser processes are killed in createClient
+  // For local development, use unique session path to avoid conflicts
   let sessionPath = SESSION_PATH
   if (!isRailway) {
-    sessionPath = path.join(SESSION_PATH, `session_${Date.now()}`)
-  } else {
     sessionPath = path.join(SESSION_PATH, `session_${Date.now()}`)
   }
 
