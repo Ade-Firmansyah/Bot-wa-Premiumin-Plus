@@ -2,11 +2,30 @@ const { enqueue } = require('../utils/queue')
 const { handleCommand } = require('./command.handler')
 const { logInfo } = require('../utils/logger')
 
-const ALLOWED_COMMANDS = ['menu', 'help', 'stok', 'stock', 'buy', 'admin', 'ping', 'p', 'cek', 'cancel', 'testpay', 'reseller', 'gabung', 'website', 'halo', 'test', 'assalamualaikum']
+const ALLOWED_COMMANDS = [
+  'menu', 'help',
+  'stok', 'stock',
+  'buy',
+  'status',
+  'cancel',
+  'admin',
+  'ping', 'p', 'cek',
+  'testpay',
+  'reseller', 'gabung',
+  'website',
+  'halo', 'test', 'assalamualaikum'
+]
 
 function isValidCommand(text) {
   const normalized = String(text).toLowerCase().trim()
-  return ALLOWED_COMMANDS.some(cmd => normalized.startsWith(cmd))
+
+  // Check exact command matches first
+  if (ALLOWED_COMMANDS.includes(normalized)) {
+    return true
+  }
+
+  // Check if message starts with any allowed command
+  return ALLOWED_COMMANDS.some(cmd => normalized.startsWith(cmd + ' ') || normalized === cmd)
 }
 
 async function handleIncomingMessage(client, msg) {
@@ -27,6 +46,7 @@ async function handleIncomingMessage(client, msg) {
 
   // Only process valid commands
   if (!isValidCommand(text)) {
+    // Senior mode: Don't respond to invalid commands
     return
   }
 
