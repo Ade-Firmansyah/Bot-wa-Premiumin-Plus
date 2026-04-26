@@ -24,14 +24,38 @@ async function processPendingOrders(client) {
         }
 
         const paymentStatus = await payment.checkDeposit(API_KEY, order.invoice_pay)
+
+        // Handle API errors
+        if (!paymentStatus.success) {
+          logError('Payment API error', {
+            invoice: order.invoice,
+            pay_invoice: order.invoice_pay,
+            message: paymentStatus.message,
+            fullResponse: paymentStatus
+          })
+          continue // Skip this order, try again later
+        }
+
         const status = paymentStatus.data?.status || paymentStatus.status || ''
-        logInfo('Checking payment status', { invoice: order.invoice, status })
+        logInfo('Checking payment status', {
+          invoice: order.invoice,
+          pay_invoice: order.invoice_pay,
+          status,
+          message: paymentStatus.message
+        })
 
         if (status === 'success') {
           await fulfillOrder(client, order)
-        } else if (status === 'expired' || status === 'failed') {
+        } else if (status === 'expired' || status === 'failed' || status === 'canceled') {
           db.updateOrder(order.invoice, { status: 'EXPIRED' })
-          await client.sendMessage(order.user, `⏳ Pesanan ${order.invoice} kedaluwarsa. Silakan buat ulang jika masih ingin membeli.`)
+          await client.sendMessage(order.user, `❌ Pembayaran ${order.invoice} ${status === 'expired' ? 'kedaluwarsa' : status === 'failed' ? 'gagal' : 'dibatalkan'}. Silakan buat ulang jika masih ingin membeli.`)
+          logInfo('Payment failed/expired', { invoice: order.invoice, status })
+        } else if (status === 'pending') {
+          // Payment still pending, continue waiting
+          logInfo('Payment still pending, will check again later', { invoice: order.invoice })
+          // Don't update status, keep waiting
+        } else {
+          logError('Unknown payment status', { invoice: order.invoice, status, fullResponse: paymentStatus })
         }
       } catch (error) {
         logError('Payment check failed', {
@@ -58,13 +82,43 @@ async function fulfillOrder(client, order) {
   }
 
   try {
-    // Step 1: Create order via Premku API
-    const orderResponse = await premku.createOrder(API_KEY, order.product_id, 1, order.invoice)
-    if (!orderResponse.success) {
-      logError('Premku order creation failed', {
+    // Step 1: Create order via Premku API with retry
+    let orderResponse
+    let retryCount = 0
+    const maxRetries = 3
+
+    while (retryCount < maxRetries) {
+      try {
+        orderResponse = await premku.createOrder(API_KEY, order.product_id, 1, order.invoice)
+        if (orderResponse.success) {
+          break // Success, exit retry loop
+        } else {
+          logError('Premku order creation failed, will retry', {
+            invoice: order.invoice,
+            attempt: retryCount + 1,
+            response: orderResponse
+          })
+        }
+      } catch (error) {
+        logError('Premku order creation error, will retry', {
+          invoice: order.invoice,
+          attempt: retryCount + 1,
+          error: error.message
+        })
+      }
+
+      retryCount++
+      if (retryCount < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, 2000 * retryCount)) // Exponential backoff
+      }
+    }
+
+    if (!orderResponse || !orderResponse.success) {
+      logError('Premku order creation failed after all retries', {
         invoice: order.invoice,
-        response: orderResponse
+        finalResponse: orderResponse
       })
+      await client.sendMessage(order.user, `❌ Gagal memproses pesanan ${order.invoice}. Silakan hubungi admin atau coba lagi nanti.`)
       return
     }
 
@@ -88,6 +142,13 @@ async function fulfillOrder(client, order) {
       error: error.message,
       stack: error.stack
     })
+
+    // Send error message to user
+    try {
+      await client.sendMessage(order.user, `❌ Terjadi kesalahan saat memproses pesanan ${order.invoice}. Silakan hubungi admin.`)
+    } catch (msgError) {
+      logError('Failed to send error message', { invoice: order.invoice, error: msgError.message })
+    }
   }
 }
 
@@ -173,6 +234,53 @@ async function sendAccountData(client, invoice, order, account) {
   }
 }
 
+async function checkStuckPayments(client) {
+  try {
+    const orders = db.getActiveOrders()
+    const now = Date.now()
+
+    for (const order of orders) {
+      // Only check orders that are still waiting for payment
+      if (order.status !== 'WAITING') {
+        continue
+      }
+
+      const ageMinutes = (now - order.created_at) / (1000 * 60)
+
+      // Force check payments that are stuck for more than 7 minutes
+      if (ageMinutes > 7) {
+        try {
+          logInfo('Force checking stuck payment', { invoice: order.invoice, ageMinutes })
+          const paymentStatus = await payment.checkDeposit(API_KEY, order.invoice_pay)
+
+          if (paymentStatus.success) {
+            const status = paymentStatus.data?.status || paymentStatus.status || ''
+            logInfo('Stuck payment status update', {
+              invoice: order.invoice,
+              pay_invoice: order.invoice_pay,
+              status,
+              wasStuck: true
+            })
+
+            // If payment is actually successful, process it
+            if (status === 'success') {
+              await fulfillOrder(client, order)
+            }
+          }
+        } catch (error) {
+          logError('Failed to check stuck payment', {
+            invoice: order.invoice,
+            pay_invoice: order.invoice_pay,
+            error: error.message
+          })
+        }
+      }
+    }
+  } catch (error) {
+    logError('Stuck payment checker failed', error)
+  }
+}
+
 async function expireOldOrders(client) {
   if (isExpiringOrders) return
   isExpiringOrders = true
@@ -186,10 +294,30 @@ async function expireOldOrders(client) {
         continue
       }
 
-      if (now - order.created_at > 5 * 60 * 1000) { // 5 minutes
+      const ageMinutes = (now - order.created_at) / (1000 * 60)
+
+      if (ageMinutes > 15) { // 15 minutes total timeout
+        // Try to cancel payment first
+        try {
+          const cancelResult = await payment.cancelDeposit(API_KEY, order.invoice_pay)
+          logInfo('Payment cancelled due to timeout', {
+            invoice: order.invoice,
+            pay_invoice: order.invoice_pay,
+            cancelResult
+          })
+        } catch (cancelError) {
+          logError('Failed to cancel payment', {
+            invoice: order.invoice,
+            pay_invoice: order.invoice_pay,
+            error: cancelError.message
+          })
+        }
+
         db.updateOrder(order.invoice, { status: 'EXPIRED' })
-        await client.sendMessage(order.user, `⏳ Waktu pembayaran untuk ${order.invoice} telah berakhir. Silakan buat kembali jika masih ingin membeli.`)
-        logInfo('Order expired due timeout', { invoice: order.invoice })
+        await client.sendMessage(order.user, `⏳ Waktu pembayaran untuk ${order.invoice} telah berakhir (15 menit). Pembayaran otomatis dibatalkan. Silakan buat kembali jika masih ingin membeli.`)
+        logInfo('Order expired due timeout', { invoice: order.invoice, ageMinutes })
+      } else if (ageMinutes > 10) { // Warning at 10 minutes
+        await client.sendMessage(order.user, `⚠️ Pembayaran ${order.invoice} akan kedaluwarsa dalam ${Math.ceil(15 - ageMinutes)} menit lagi. Segera selesaikan pembayaran QRIS Anda.`)
       }
     }
   } catch (error) {
@@ -211,11 +339,24 @@ function startOrderWatcher(client) {
     expireOldOrders(client).catch(error => logError('Order expiration failed', error))
   }, 90 * 1000)
 
+  // New: Force check stuck payments every 5 minutes
+  const stuckPaymentCheckInterval = setInterval(() => {
+    checkStuckPayments(client).catch(error => logError('Stuck payment checker failed', error))
+  }, 5 * 60 * 1000)
+
+  logInfo('Order watcher started', {
+    orderCheckInterval: '15s',
+    expirationInterval: '90s',
+    stuckPaymentCheckInterval: '5min'
+  })
+
   // Cleanup function for graceful shutdown
   return {
     stop: () => {
       clearInterval(orderCheckInterval)
       clearInterval(expirationInterval)
+      clearInterval(stuckPaymentCheckInterval)
+      logInfo('Order watcher stopped')
     }
   }
 }
