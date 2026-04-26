@@ -5,6 +5,31 @@ const { startScheduler: startStatusScheduler, stopScheduler: stopStatusScheduler
 const { validateSystem } = require('./utils/validator')
 const resellerService = require('./service/reseller.service')
 const { logInfo, logError } = require('./utils/logger')
+const express = require('express')
+const path = require('path')
+
+// Health check server for Railway monitoring
+const app = express()
+const PORT = process.env.PORT || 3000
+
+app.get('/health', (req, res) => {
+  const isHealthy = botClient && botClient.info && botClient.info.wid
+  res.status(isHealthy ? 200 : 503).json({
+    status: isHealthy ? 'healthy' : 'unhealthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    whatsapp: {
+      connected: !!(botClient && botClient.info),
+      user: botClient?.info?.pushname || null
+    }
+  })
+})
+
+// Start health check server
+app.listen(PORT, () => {
+  logInfo(`Health check server running on port ${PORT}`)
+})
 
 // Global error handlers
 process.on('uncaughtException', (error) => {

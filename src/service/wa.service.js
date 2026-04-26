@@ -99,7 +99,15 @@ function createClient() {
   const isRailway = process.env.RAILWAY_ENVIRONMENT
 
   if (isRailway) {
-    clearSessionData()
+    // Only clear session on first startup or when explicitly needed
+    // Don't clear session on every restart to maintain login state
+    const sessionExists = require('fs').existsSync(path.join(SESSION_PATH, 'session-bot-session'))
+    if (!sessionExists) {
+      logInfo('No existing session found, clearing old data for fresh start')
+      clearSessionData()
+    } else {
+      logInfo('Existing session found, preserving login state')
+    }
     killExistingBrowsers()
   }
 
@@ -110,6 +118,41 @@ function createClient() {
     sessionPath = path.join(SESSION_PATH, `session_${Date.now()}`)
   }
 
+  // Determine Chromium executable path for Railway
+  let chromiumPath
+  if (isRailway) {
+    // Try multiple possible Chromium paths on Railway/Debian
+    const possiblePaths = [
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser',
+      '/usr/lib/bin/chromium',
+      '/usr/lib/bin/chromium-browser'
+    ]
+
+    for (const path of possiblePaths) {
+      try {
+        require('fs').accessSync(path, require('fs').constants.X_OK)
+        chromiumPath = path
+        logInfo(`Found Chromium executable at: ${path}`)
+        break
+      } catch (e) {
+        // Path not accessible, try next
+      }
+    }
+
+    if (!chromiumPath) {
+      logError('No Chromium executable found on Railway. Available paths will be logged.')
+      // Log available executables for debugging
+      try {
+        const { execSync } = require('child_process')
+        const result = execSync('find /usr -name "*chromium*" -type f 2>/dev/null || echo "No chromium found"', { encoding: 'utf8' })
+        logInfo('Available Chromium paths:', result.trim())
+      } catch (e) {
+        logError('Could not search for Chromium paths', e.message)
+      }
+    }
+  }
+
   // Use stable session configuration to prevent random logouts
   const client = new Client({
     authStrategy: new LocalAuth({
@@ -118,7 +161,7 @@ function createClient() {
     }),
     puppeteer: {
       headless: true,
-      executablePath: isRailway ? '/usr/bin/chromium' : undefined, // Use Chromium binary path on Debian/Railway
+      executablePath: chromiumPath, // Use detected Chromium path for Railway
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
