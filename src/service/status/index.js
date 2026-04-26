@@ -2,7 +2,8 @@ const { validateSystem } = require('../../utils/validator')
 const { postStatus } = require('./status.service')
 const { logInfo, logError } = require('./status.logger')
 
-let schedulerIntervalId = null
+const SCHEDULE_INTERVAL_MS = 10 * 60 * 1000
+let schedulerTimer = null
 let isSchedulerRunning = false
 
 function validateAndInitialize() {
@@ -13,6 +14,19 @@ function validateAndInitialize() {
 
   logInfo('Status scheduler system validated and ready')
   return true
+}
+
+function scheduleNext(client) {
+  if (!isSchedulerRunning) return
+  schedulerTimer = setTimeout(async () => {
+    try {
+      await postStatus(client)
+    } catch (error) {
+      logError('Error in scheduler cycle', { error: error.message })
+    } finally {
+      scheduleNext(client)
+    }
+  }, SCHEDULE_INTERVAL_MS)
 }
 
 function startScheduler(client) {
@@ -27,24 +41,17 @@ function startScheduler(client) {
   }
 
   isSchedulerRunning = true
-
-  schedulerIntervalId = setInterval(() => {
-    postStatus(client).catch(error => {
-      logError('Error in scheduler interval', { error: error.message })
-    })
-  }, 10 * 60 * 1000)
-
   logInfo('Status scheduler started', { interval: '10 minutes' })
 
-  postStatus(client).catch(error => {
-    logError('Initial status post failed', { error: error.message })
-  })
+  postStatus(client)
+    .catch(error => logError('Initial status post failed', { error: error.message }))
+    .finally(() => scheduleNext(client))
 }
 
 function stopScheduler() {
-  if (schedulerIntervalId) {
-    clearInterval(schedulerIntervalId)
-    schedulerIntervalId = null
+  if (schedulerTimer) {
+    clearTimeout(schedulerTimer)
+    schedulerTimer = null
   }
   isSchedulerRunning = false
   logInfo('Status scheduler stopped')

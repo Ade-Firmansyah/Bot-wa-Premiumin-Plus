@@ -134,14 +134,13 @@ JANGAN upload:
 ## ⚙️ LIBRARY
 
 * whatsapp-web.js
-* axios
 * dotenv
 * qrcode-terminal
 
 Install manual:
 
 ```bash
-npm install whatsapp-web.js axios dotenv qrcode-terminal
+npm install whatsapp-web.js dotenv qrcode-terminal
 ```
 
 ---

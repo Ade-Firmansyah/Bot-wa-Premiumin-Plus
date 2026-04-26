@@ -1,7 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const { logInfo, logError } = require('./logger')
-const { ensureAssetDirs, cleanDuplicateVideos, invalidateCache } = require('../service/status/status.assets')
+const { ensureAssetDirs } = require('../service/status/status.assets')
 const { ensureHistoryFile } = require('../service/status/status.memory')
 const { ensureLogsDir } = require('../service/status/status.logger')
 
@@ -42,10 +42,6 @@ function validateSystem() {
 
     ensureJsonFile(path.join(DATABASE_DIR, 'status_history.json'), DEFAULT_HISTORY)
     ensureLogFile(STATUS_LOG_FILE)
-
-    cleanDuplicateVideos((message, data) => logInfo(message, data))
-    invalidateCache()
-
     ensureHistoryFile()
 
     logInfo('System validation completed successfully')

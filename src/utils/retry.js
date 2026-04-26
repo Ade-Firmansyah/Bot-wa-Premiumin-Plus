@@ -4,7 +4,7 @@ function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-async function retry(fn, maxRetry = 3, delay = 2000) {
+async function retry(fn, maxRetry = 2, delay = 500) {
   let attempt = 1
   while (true) {
     try {

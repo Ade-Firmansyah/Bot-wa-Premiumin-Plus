@@ -327,40 +327,62 @@ async function expireOldOrders(client) {
   }
 }
 
-function startOrderWatcher(client) {
-  // Increased intervals to reduce CPU load
-  // Check pending orders every 15 seconds (was 10)
-  const orderCheckInterval = setInterval(() => {
-    processPendingOrders(client).catch(error => logError('Pending order checker failed', error))
-  }, 15 * 1000)
+const WATCH_INTERVAL_MS = 15 * 1000
+const EXPIRATION_CHECK_MS = 90 * 1000
+const STUCK_CHECK_MS = 5 * 60 * 1000
 
-  // Check expiring orders every 90 seconds (was 60)
-  const expirationInterval = setInterval(() => {
-    expireOldOrders(client).catch(error => logError('Order expiration failed', error))
-  }, 90 * 1000)
+let watcherTimer = null
+let watcherRunning = false
+let lastExpirationCheck = 0
+let lastStuckCheck = 0
 
-  // New: Force check stuck payments every 5 minutes
-  const stuckPaymentCheckInterval = setInterval(() => {
-    checkStuckPayments(client).catch(error => logError('Stuck payment checker failed', error))
-  }, 5 * 60 * 1000)
+function scheduleWatcher(client) {
+  if (!watcherRunning) return
 
-  logInfo('Order watcher started', {
-    orderCheckInterval: '15s',
-    expirationInterval: '90s',
-    stuckPaymentCheckInterval: '5min'
-  })
+  watcherTimer = setTimeout(async () => {
+    try {
+      await processPendingOrders(client)
+      const now = Date.now()
 
-  // Cleanup function for graceful shutdown
-  return {
-    stop: () => {
-      clearInterval(orderCheckInterval)
-      clearInterval(expirationInterval)
-      clearInterval(stuckPaymentCheckInterval)
-      logInfo('Order watcher stopped')
+      if (now - lastExpirationCheck >= EXPIRATION_CHECK_MS) {
+        await expireOldOrders(client)
+        lastExpirationCheck = now
+      }
+
+      if (now - lastStuckCheck >= STUCK_CHECK_MS) {
+        await checkStuckPayments(client)
+        lastStuckCheck = now
+      }
+    } catch (error) {
+      logError('Order watcher tick failed', error)
+    } finally {
+      scheduleWatcher(client)
     }
+  }, WATCH_INTERVAL_MS)
+}
+
+const orderWatcher = {
+  start(client) {
+    if (watcherRunning) return
+    watcherRunning = true
+    lastExpirationCheck = 0
+    lastStuckCheck = 0
+    logInfo('Order watcher started')
+    scheduleWatcher(client)
+  },
+
+  stop() {
+    watcherRunning = false
+    if (watcherTimer) {
+      clearTimeout(watcherTimer)
+      watcherTimer = null
+    }
+    logInfo('Order watcher stopped')
   }
 }
 
 module.exports = {
-  startOrderWatcher
+  orderWatcher,
+  startOrderWatcher: orderWatcher.start,
+  stopOrderWatcher: orderWatcher.stop
 }

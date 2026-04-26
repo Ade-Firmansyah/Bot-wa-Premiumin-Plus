@@ -5,7 +5,13 @@ const { decrypt } = require('../utils/crypto')
 dotenv.config({ path: path.resolve(__dirname, '../../.env') })
 
 const SESSION_PATH = path.resolve(process.cwd(), 'sessions')
-const { ENCRYPTED_API_KEY, CRYPTO_SECRET, API_KEY: RAW_API_KEY } = process.env
+const {
+  ENCRYPTED_API_KEY,
+  CRYPTO_SECRET,
+  API_KEY: RAW_API_KEY,
+  PREMKU_API_BASE_URL,
+  PAYMENT_API_BASE_URL
+} = process.env
 
 let API_KEY = ''
 
@@ -31,5 +37,6 @@ if (!API_KEY) {
 
 module.exports = {
   API_KEY,
-  SESSION_PATH
+  SESSION_PATH,
+  BASE_API_URL: PREMKU_API_BASE_URL || PAYMENT_API_BASE_URL || 'https://premku.com/api'
 }

@@ -1,42 +1,66 @@
-const axios = require('axios')
 const { retry } = require('../utils/retry')
+const { enqueue, dedupe } = require('../utils/request-queue')
 const { logInfo, logError } = require('../utils/logger')
+const BASE_URL = process.env.PREMIKU_API_BASE_URL || process.env.PAYMENT_API_BASE_URL || 'https://premku.com/api'
+const TIMEOUT_MS = 10000
 
-const client = axios.create({
-  baseURL: 'https://premku.com/api',
-  timeout: 10000
-})
+const productCache = {
+  data: null,
+  expiresAt: 0
+}
+
+async function fetchJson(path, payload) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+
+  try {
+    const response = await fetch(`${BASE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    })
+
+    const data = await response.json().catch(() => ({}))
+
+    if (!response.ok) {
+      throw new Error(`API ${path} failed with status ${response.status}`)
+    }
+
+    return data
+  } catch (error) {
+    logError('Premku fetch failed', { path, payload, error: error.message })
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 async function getProducts(apiKey) {
-  return retry(async () => {
-    const response = await client.post('/products', { api_key: apiKey })
-    logInfo('Premku getProducts', { status: response.status })
-    return response.data
-  })
+  if (Date.now() < productCache.expiresAt && productCache.data) {
+    return productCache.data
+  }
+
+  const response = await dedupe(`getProducts:${apiKey}`, () => enqueue(() => retry(() => fetchJson('/products', { api_key: apiKey }))))
+  productCache.data = response
+  productCache.expiresAt = Date.now() + 20 * 1000
+  return response
 }
 
 async function createOrder(apiKey, productId, quantity, refId) {
-  return retry(async () => {
-    const response = await client.post('/order', {
-      api_key: apiKey,
-      product_id: productId,
-      qty: quantity,
-      ref_id: refId
-    })
-    logInfo('Premku createOrder', { status: response.status, refId })
-    return response.data
-  })
+  return enqueue(() => retry(() => fetchJson('/order', {
+    api_key: apiKey,
+    product_id: productId,
+    qty: quantity,
+    ref_id: refId
+  })))
 }
 
 async function checkOrder(apiKey, invoice) {
-  return retry(async () => {
-    const response = await client.post('/status', {
-      api_key: apiKey,
-      invoice
-    })
-    logInfo('Premku checkOrder', { status: response.status, invoice })
-    return response.data
-  })
+  return dedupe(`checkOrder:${invoice}`, () => enqueue(() => retry(() => fetchJson('/status', {
+    api_key: apiKey,
+    invoice
+  }))))
 }
 
 module.exports = {

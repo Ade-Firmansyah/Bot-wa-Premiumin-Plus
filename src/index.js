@@ -1,20 +1,23 @@
-const { createClient, killExistingBrowsers } = require('./service/wa.service')
+const http = require('http')
+const { createClient } = require('./service/wa.service')
 const { handleIncomingMessage } = require('./handler/message.handler')
-const { startOrderWatcher } = require('./handler/order.handler')
+const { orderWatcher } = require('./handler/order.handler')
 const { startScheduler: startStatusScheduler, stopScheduler: stopStatusScheduler } = require('./service/status.service')
 const { validateSystem } = require('./utils/validator')
 const resellerService = require('./service/reseller.service')
 const { logInfo, logError } = require('./utils/logger')
-const express = require('express')
-const path = require('path')
 
-// Health check server for Railway monitoring
-const app = express()
-const PORT = process.env.PORT || 3000
+const PORT = Number(process.env.PORT || 3000)
+const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000
 
-app.get('/health', (req, res) => {
+let botClient = null
+let isInitializing = false
+let isIdle = false
+let inactivityTimer = null
+
+function sendHealthResponse(res) {
   const isHealthy = botClient && botClient.info && botClient.info.wid
-  res.status(isHealthy ? 200 : 503).json({
+  const payload = {
     status: isHealthy ? 'healthy' : 'unhealthy',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
@@ -23,63 +26,78 @@ app.get('/health', (req, res) => {
       connected: !!(botClient && botClient.info),
       user: botClient?.info?.pushname || null
     }
-  })
+  }
+
+  res.writeHead(isHealthy ? 200 : 503, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify(payload))
+}
+
+const server = http.createServer((req, res) => {
+  if (req.url === '/health') {
+    return sendHealthResponse(res)
+  }
+
+  res.writeHead(404, { 'Content-Type': 'text/plain' })
+  res.end('Not found')
 })
 
-// Start health check server
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   logInfo(`Health check server running on port ${PORT}`)
 })
 
-// Global error handlers
-process.on('uncaughtException', (error) => {
+function resetInactivityTimer() {
+  clearTimeout(inactivityTimer)
+  inactivityTimer = setTimeout(() => {
+    if (isIdle) return
+    logInfo('Entering idle mode due to inactivity')
+    isIdle = true
+    orderWatcher.stop()
+    stopStatusScheduler()
+  }, INACTIVITY_TIMEOUT_MS)
+}
+
+function wakeFromIdle() {
+  if (!isIdle) {
+    resetInactivityTimer()
+    return
+  }
+
+  isIdle = false
+  logInfo('Waking from idle mode')
+  if (botClient && botClient.info) {
+    orderWatcher.start(botClient)
+    startStatusScheduler(botClient)
+    resellerService.removeExpired(botClient)
+  }
+  resetInactivityTimer()
+}
+
+function markActivity() {
+  resetInactivityTimer()
+  if (isIdle) {
+    wakeFromIdle()
+  }
+}
+
+process.on('uncaughtException', error => {
   logError('Uncaught Exception', { error: error.message, stack: error.stack })
-  // Attempt restart instead of immediate exit
   setTimeout(() => scheduleRestart(), 3000)
 })
 
-process.on('unhandledRejection', (reason, promise) => {
+process.on('unhandledRejection', reason => {
   logError('Unhandled Rejection', { reason: reason?.message || reason })
-  // Don't exit, just log
 })
 
-process.on('warning', (warning) => {
-  // Optimasi: skip warning logs untuk performa
-  // logError('Process Warning', { warning: warning.message, stack: warning.stack })
-})
-
-// Enable aggressive garbage collection for memory optimization
-if (global.gc) {
-  setInterval(() => {
-    global.gc()
-  }, 60000) // Run GC every 60 seconds
-}
-
-// Optimasi: Cache cleanup untuk mencegah memory leak
-const cacheCleanup = new Map()
-setInterval(() => {
-  // Cleanup expired cache entries
-  const now = Date.now()
-  for (const [key, value] of cacheCleanup.entries()) {
-    if (now - value.timestamp > 300000) { // 5 minutes
-      cacheCleanup.delete(key)
-    }
-  }
-  logInfo(`Cache cleanup: ${cacheCleanup.size} entries remaining`)
-}, 300000) // Every 5 minutes
-
-let botClient = null
-let orderWatcherStarted = false
-let isInitializing = false
+process.on('warning', () => {})
 
 async function initializeBot() {
   if (isInitializing) {
-    logInfo('Bot initialization already in progress, skipping')
+    logInfo('Bot initialization already in progress')
     return
   }
 
   isInitializing = true
-  logInfo('🚀 Starting Premiumin Plus WhatsApp bot')
+  logInfo('Starting Premiumin Plus WhatsApp bot')
 
   if (!validateSystem()) {
     logError('System validation failed, aborting startup')
@@ -88,14 +106,12 @@ async function initializeBot() {
   }
 
   stopStatusScheduler()
-  orderWatcherStarted = false
-
-  // For Railway, browser processes are killed in createClient
-  // For local development, we use different session paths to avoid conflicts
+  orderWatcher.stop()
 
   botClient = createClient()
 
   botClient.on('message', async msg => {
+    markActivity()
     try {
       await handleIncomingMessage(botClient, msg)
     } catch (error) {
@@ -104,31 +120,13 @@ async function initializeBot() {
   })
 
   botClient.on('ready', () => {
-    logInfo('✅ WhatsApp client ready - initializing services')
+    logInfo('WhatsApp client ready')
     isInitializing = false
-
-    if (!orderWatcherStarted) {
-      logInfo('Starting order watcher')
-      startOrderWatcher(botClient)
-      orderWatcherStarted = true
-    }
-
-    logInfo('Starting status scheduler')
+    isIdle = false
+    orderWatcher.start(botClient)
     startStatusScheduler(botClient)
-
-    // Start reseller expire checker
-    setInterval(() => {
-      try {
-        resellerService.removeExpired(botClient)
-      } catch (error) {
-        logError('Reseller expire check failed', {
-          error: error.message,
-          stack: error.stack
-        })
-      }
-    }, 60 * 60 * 1000) // Check every hour
-
-    logInfo('Reseller expire checker started')
+    resellerService.removeExpired(botClient)
+    resetInactivityTimer()
   })
 
   botClient.initialize().catch(error => {
@@ -141,8 +139,9 @@ async function initializeBot() {
 function scheduleRestart(delay = 5000) {
   logInfo('Scheduling bot restart', { delay })
   stopStatusScheduler()
-  orderWatcherStarted = false
+  orderWatcher.stop()
   isInitializing = false
+  isIdle = false
 
   setTimeout(() => {
     try {
@@ -154,5 +153,4 @@ function scheduleRestart(delay = 5000) {
   }, delay)
 }
 
-// Start the bot
 initializeBot()

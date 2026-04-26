@@ -1,15 +1,9 @@
 const fs = require('fs')
 const path = require('path')
-const http = require('http')
-const { spawn } = require('child_process')
 const qrcode = require('qrcode-terminal')
-const QRCode = require('qrcode')
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js')
+const { Client, LocalAuth } = require('whatsapp-web.js')
 const { logInfo, logError } = require('../utils/logger')
 const { SESSION_PATH } = require('../config')
-
-let latestQrDataUrl = null
-let qrServer = null
 
 function ensureSessionPath() {
   if (!fs.existsSync(SESSION_PATH)) {
@@ -17,242 +11,89 @@ function ensureSessionPath() {
   }
 }
 
-function killExistingBrowsers() {
-  return new Promise((resolve) => {
+function detectChromium() {
+  if (process.env.CHROMIUM_PATH) {
+    return process.env.CHROMIUM_PATH
+  }
+
+  const candidates = [
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome'
+  ]
+
+  for (const candidate of candidates) {
     try {
-      // Kill Chrome processes on Windows
-      const kill = spawn('taskkill', ['/f', '/im', 'chrome.exe', '/t'], { stdio: 'inherit' })
-      kill.on('close', () => {
-        logInfo('Killed existing Chrome processes')
-        resolve()
-      })
-      kill.on('error', () => {
-        // Ignore errors if no processes found
-        resolve()
-      })
-    } catch (error) {
-      logError('Failed to kill existing browsers', error)
-      resolve()
+      fs.accessSync(candidate, fs.constants.X_OK)
+      return candidate
+    } catch (_) {
+      continue
     }
-  })
-}
-
-function clearSessionData() {
-  try {
-    if (fs.existsSync(SESSION_PATH)) {
-      const files = fs.readdirSync(SESSION_PATH)
-      for (const file of files) {
-        const filePath = path.join(SESSION_PATH, file)
-        if (fs.statSync(filePath).isFile()) {
-          fs.unlinkSync(filePath)
-        }
-      }
-      logInfo('Cleared existing session data')
-    }
-  } catch (error) {
-    logError('Failed to clear session data', error)
-  }
-}
-
-function startQrHttpServer(port = process.env.PORT || 3000) {
-  if (qrServer) {
-    return
   }
 
-  qrServer = http.createServer((req, res) => {
-    if (req.url !== '/' && req.url !== '/qr') {
-      res.writeHead(404, { 'Content-Type': 'text/plain' })
-      return res.end('Not found')
-    }
-
-    const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>WhatsApp QR</title>
-  <style>body{font-family:Arial,sans-serif;text-align:center;padding:30px;background:#111;color:#fff}img{max-width:100%;height:auto;border:4px solid #fff;box-shadow:0 0 20px rgba(255,255,255,.2)}.hint{margin-top:16px;font-size:16px;opacity:.8;}</style>
-</head>
-<body>
-  <h1>Scan WhatsApp QR</h1>
-  ${latestQrDataUrl ? `<img src="${latestQrDataUrl}" alt="WhatsApp QR Code"/>` : '<p>Menunggu QR baru...</p>'}
-  <p class="hint">Reload halaman jika QR belum muncul.</p>
-</body>
-</html>`
-
-    res.writeHead(200, { 'Content-Type': 'text/html' })
-    res.end(html)
-  })
-
-  qrServer.on('error', (err) => {
-    logError('QR HTTP server error', err)
-  })
-
-  qrServer.listen(port, () => {
-    logInfo(`QR page available on http://localhost:${port} (use Railway public URL)`)
-  })
+  return undefined
 }
 
 function createClient() {
   ensureSessionPath()
 
-  // For Railway deployment, use different configuration
-  const isRailway = process.env.RAILWAY_ENVIRONMENT
-
-  if (isRailway) {
-    // Only clear session on first startup or when explicitly needed
-    // Don't clear session on every restart to maintain login state
-    const sessionExists = require('fs').existsSync(path.join(SESSION_PATH, 'session-bot-session'))
-    if (!sessionExists) {
-      logInfo('No existing session found, clearing old data for fresh start')
-      clearSessionData()
-    } else {
-      logInfo('Existing session found, preserving login state')
-    }
-    killExistingBrowsers()
-  }
-
-  // For Railway, browser processes are killed in createClient
-  // For local development, use unique session path to avoid conflicts
-  let sessionPath = SESSION_PATH
-  if (!isRailway) {
-    sessionPath = path.join(SESSION_PATH, `session_${Date.now()}`)
-  }
-
-  // Determine Chromium executable path for Railway
-  let chromiumPath
-  if (isRailway) {
-    // Try multiple possible Chromium paths on Railway/Debian
-    const possiblePaths = [
-      '/usr/bin/chromium',
-      '/usr/bin/chromium-browser',
-      '/usr/lib/bin/chromium',
-      '/usr/lib/bin/chromium-browser'
-    ]
-
-    for (const path of possiblePaths) {
-      try {
-        require('fs').accessSync(path, require('fs').constants.X_OK)
-        chromiumPath = path
-        logInfo(`Found Chromium executable at: ${path}`)
-        break
-      } catch (e) {
-        // Path not accessible, try next
-      }
-    }
-
-    if (!chromiumPath) {
-      logError('No Chromium executable found on Railway. Available paths will be logged.')
-      // Log available executables for debugging
-      try {
-        const { execSync } = require('child_process')
-        const result = execSync('find /usr -name "*chromium*" -type f 2>/dev/null || echo "No chromium found"', { encoding: 'utf8' })
-        logInfo('Available Chromium paths:', result.trim())
-      } catch (e) {
-        logError('Could not search for Chromium paths', e.message)
-      }
-    }
-  }
-
-  // Use stable session configuration to prevent random logouts
+  const chromiumPath = detectChromium()
   const client = new Client({
     authStrategy: new LocalAuth({
-      clientId: "bot-session",
-      dataPath: "./sessions"
+      clientId: 'bot-session',
+      dataPath: SESSION_PATH
     }),
     puppeteer: {
       headless: true,
-      executablePath: chromiumPath, // Use detected Chromium path for Railway
+      executablePath: chromiumPath,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-accelerated-2d-canvas',
         '--disable-extensions',
-        '--disable-features=TranslateUI',
+        '--disable-background-networking',
+        '--disable-background-timer-throttling',
         '--disable-renderer-backgrounding',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-breakpad',
-        '--disable-client-side-phishing-detection',
-        '--disable-default-apps',
-        '--disable-hang-monitor',
-        '--disable-popup-blocking',
-        '--disable-preconnect',
-        '--disable-prompt-on-repost',
-        '--disable-sync',
-        '--enable-automation',
+        '--disable-gpu',
         '--no-first-run',
-        '--no-pings',
         '--no-zygote',
         '--single-process',
-        '--disable-gpu',
-        '--disable-web-resources',
-        '--disable-component-extensions-with-background-pages',
-        '--disable-component-update',
-        '--disable-background-networking', // Optimasi: kurangi background networking
-        '--disable-background-timer-throttling', // Optimasi: kurangi throttling untuk memory
-        '--memory-pressure-off', // Optimasi: matikan memory pressure handling
-        '--max_old_space_size=512', // Optimasi: batasi heap size untuk stability
-        '--optimize-for-size', // Optimasi: optimasi untuk ukuran kecil
-        '--disable-logging', // Optimasi: disable logging untuk performa
-        '--disable-dev-tools', // Optimasi: disable dev tools
-        '--disable-software-rasterizer', // Optimasi: disable software rasterizer
-        ...(isRailway ? [
-          '--disable-background-timer-throttling',
-          '--disable-renderer-backgrounding',
-          '--disable-backgrounding-occluded-windows',
-          '--disable-features=UserMediaScreenCapturing',
-          '--memory-pressure-off'
-        ] : [])
+        '--disable-dev-tools',
+        '--disable-logging',
+        '--disable-software-rasterizer'
       ]
     }
   })
 
   client.on('qr', qr => {
-    logInfo('QR code generated, scan with WhatsApp mobile app')
+    logInfo('QR code generated for login')
     qrcode.generate(qr, { small: true })
-
-    QRCode.toDataURL(qr)
-      .then((url) => {
-        latestQrDataUrl = url
-        logInfo('QR image generated for browser preview')
-      })
-      .catch((error) => {
-        logError('Failed to generate QR image', error)
-      })
   })
 
   client.on('ready', () => {
     logInfo('WhatsApp client ready')
   })
 
-  client.on('auth_failure', (msg) => {
+  client.on('auth_failure', msg => {
     logError('WhatsApp authentication failure', { message: msg })
-    // Only log, don't attempt reconnect to avoid loops
   })
 
-  client.on('disconnected', (reason) => {
+  client.on('disconnected', reason => {
     if (reason === 'LOGOUT') {
-      logInfo('User logged out from phone - session ended')
-      // Don't reconnect if user logged out
+      logInfo('WhatsApp session logged out')
     } else {
       logError('WhatsApp disconnected unexpectedly', { reason })
-      // Attempt to reconnect for non-logout disconnections
       setTimeout(() => {
-        logInfo('Attempting WhatsApp reconnect after unexpected disconnect')
         client.initialize().catch(err => logError('WhatsApp reconnect error', err))
       }, 5000)
     }
   })
 
-  if (process.env.PORT || process.env.RAILWAY_ENVIRONMENT) {
-    startQrHttpServer()
-  }
-
   return client
 }
 
 module.exports = {
-  createClient,
-  killExistingBrowsers,
-  MessageMedia
+  createClient
 }
