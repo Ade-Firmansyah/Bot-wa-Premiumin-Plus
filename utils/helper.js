@@ -48,7 +48,7 @@ function normalizeTransaction(transaction) {
 function normalizeUser(value) {
   if (typeof value === "number") {
     return {
-      role: "normal",
+      role: "user",
       saldo: Math.max(0, value),
       expiredAt: null
     }
@@ -56,13 +56,13 @@ function normalizeUser(value) {
 
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {
-      role: "normal",
+      role: "user",
       saldo: 0,
       expiredAt: null
     }
   }
 
-  const role = value.role === "reseller" ? "reseller" : "normal"
+  const role = value.role === "reseller" ? "reseller" : "user"
   const expiredAt = Number(value.expiredAt || 0) || null
 
   return {
@@ -167,7 +167,7 @@ export function getUser(userId) {
 export function downgradeExpiredUser(db, userId) {
   const user = ensureUser(db, userId)
   if (user.role === "reseller" && user.expiredAt && Date.now() >= user.expiredAt) {
-    user.role = "normal"
+    user.role = "user"
     user.expiredAt = null
     saveDB(db)
   }

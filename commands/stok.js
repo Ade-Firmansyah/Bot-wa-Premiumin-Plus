@@ -1,7 +1,6 @@
 import { API } from "../services/api.js"
 import {
   calculatePrice,
-  createUniqueCode,
   downgradeExpiredUser,
   formatRupiah,
   isResellerActive,
@@ -34,53 +33,44 @@ Silakan coba beberapa saat lagi.${SUPPORT_TEXT}
       })
     }
 
-    const available = products.filter(product => Number(product.stock || 0) > 0 && product.status !== "soldout")
-    const empty = products.filter(product => Number(product.stock || 0) <= 0 || product.status === "soldout")
+    const available = products.filter(product => isProductAvailable(product))
+    const empty = products.filter(product => !isProductAvailable(product))
 
     let message = `━━━━━━━━━━━━━━━━━━
 📦 *STOK PREMIUMIN PLUS*
-
-👤 Status:
-${reseller ? "Reseller" : "User biasa"}
-
-${reseller ? `💰 Saldo:\n${formatRupiah(user.saldo)}` : "💰 Pembelian:\nLangsung QRIS"}
 ━━━━━━━━━━━━━━━━━━
 
 `
 
-    if (available.length === 0) {
-      message += `Stok ready sedang kosong.
-
-Produk habis hari ini:
-${empty.slice(0, 10).map(product => `❌ ${product.name}`).join("\n") || "-"}
-`
-    } else {
+    if (available.length > 0) {
       message += available.map(product => {
         const role = reseller ? "RESELLER" : "NORMAL"
         const price = Number(product.price_reseller && reseller ? product.price_reseller : calculatePrice(product.price, role))
-        const estimatedTotal = reseller ? price : price + createUniqueCode()
 
-        return `📦 *${product.name}*
-Stok: ${product.stock}
-Harga: ${formatRupiah(price)}
-${reseller ? "" : `Estimasi QRIS: ${formatRupiah(estimatedTotal)}\n`}Kode: buy ${product.id}`
+        return `📦 ${product.name} || STOK : ${Number(product.stock || 0)} AKUN
+💰 PRICE : ${formatRupiah(price)} || 🔑 CODE : buy ${product.id}`
       }).join("\n\n")
+    } else {
+      message += "STOK READY SEDANG KOSONG\n"
     }
 
-    message += `
+    message += `\n\n━━━━━━━━━━━━━━━━━━
+❌ *STOK KOSONG*
 
+${buildEmptyStockList(empty)}
+
+(STOK AKAN UPDATE SETIAP HARI)
 ━━━━━━━━━━━━━━━━━━
 🛒 Cara beli:
-buy <id_produk>
+buy <id>
 
 👑 Reseller:
 reseller
-
-${reseller ? "💰 Deposit saldo:\ndeposit 50000" : "User biasa tidak perlu deposit saldo."}${SUPPORT_TEXT}
+${SUPPORT_TEXT}
 ━━━━━━━━━━━━━━━━━━`
 
     await sock.sendMessage(userId, { text: message })
-    log("STOK", `${userId} melihat stok sebagai ${reseller ? "reseller" : "normal"}`)
+    log("STOK", `${userId} melihat stok sebagai ${reseller ? "reseller" : "user"}`)
   } catch (error) {
     log("STOK", `Gagal: ${error.message}`)
     return sock.sendMessage(userId, {
@@ -91,4 +81,18 @@ Silakan coba lagi nanti.${SUPPORT_TEXT}
 ━━━━━━━━━━━━━━━━━━`
     })
   }
+}
+
+function isProductAvailable(product) {
+  const stock = Number(product.stock || 0)
+  const status = String(product.status || "").toLowerCase()
+  return stock > 0 && !["soldout", "empty", "habis", "unavailable"].includes(status)
+}
+
+function buildEmptyStockList(products) {
+  if (!products.length) return "- Tidak ada stok kosong saat ini"
+  return products
+    .slice(0, 30)
+    .map(product => `-${product.name}`)
+    .join("\n")
 }

@@ -12,13 +12,22 @@ import {
   SUPPORT_TEXT
 } from "../utils/helper.js"
 
-const RESELLER_PRICE = Number(process.env.RESELLER_PRICE || 50000)
-const RESELLER_DURATION = 30 * 24 * 60 * 60 * 1000
+const RESELLER_PACKAGES = {
+  "1bulan": {
+    label: "1 Bulan",
+    price: Number(process.env.RESELLER_PRICE_1_MONTH || 10000),
+    durationMs: 30 * 24 * 60 * 60 * 1000
+  },
+  "1tahun": {
+    label: "1 Tahun",
+    price: Number(process.env.RESELLER_PRICE_1_YEAR || 50000),
+    durationMs: 365 * 24 * 60 * 60 * 1000
+  }
+}
 
 export default async (sock, msg) => {
   const text = (msg.message?.conversation || "").trim().toLowerCase()
-  const allowed = ["reseller", "joinreseller", "join reseller", "gabung reseller"]
-  if (!allowed.includes(text)) return
+  if (!isResellerCommand(text)) return
 
   const userId = msg.key.participant || msg.key.remoteJid
 
@@ -39,7 +48,7 @@ ${formatRupiah(user.saldo)}
 📆 Expired:
 ${formatDate(user.expiredAt)}
 
-📦 Ketik:
+📦 Stok:
 stok
 
 🛒 Order:
@@ -51,29 +60,7 @@ deposit 50000
         })
       }
 
-      return sock.sendMessage(userId, {
-        text: `━━━━━━━━━━━━━━━━━━
-👑 *RESELLER PREMIUMIN*
-━━━━━━━━━━━━━━━━━━
-
-Keuntungan:
-
-💸 Harga lebih murah
-⚡ Proses instan
-🔒 Transaksi aman
-
-━━━━━━━━━━━━━━━━━━
-💰 Harga:
-${formatRupiah(RESELLER_PRICE)}
-
-📆 Aktif:
-30 hari
-
-━━━━━━━━━━━━━━━━━━
-🛒 Ketik:
-joinreseller
-━━━━━━━━━━━━━━━━━━`
-      })
+      return sock.sendMessage(userId, { text: buildResellerMenu() })
     }
 
     if (isResellerActive(user)) {
@@ -90,7 +77,12 @@ ${formatRupiah(user.saldo)}
       })
     }
 
-    const response = await API.createDeposit(RESELLER_PRICE)
+    const selectedPackage = parsePackage(text)
+    if (!selectedPackage) {
+      return sock.sendMessage(userId, { text: buildResellerMenu() })
+    }
+
+    const response = await API.createDeposit(selectedPackage.price)
     if (!response?.success || !response?.data?.invoice) {
       throw new Error(response?.message || "Gagal membuat pembayaran reseller")
     }
@@ -102,7 +94,10 @@ ${formatRupiah(user.saldo)}
       type: "reseller_join",
       method: "qris",
       userId,
-      amount: RESELLER_PRICE,
+      amount: selectedPackage.price,
+      packageKey: selectedPackage.key,
+      packageLabel: selectedPackage.label,
+      durationMs: selectedPackage.durationMs,
       status: "pending",
       createdAt: Date.now(),
       expireAt: Date.now() + 5 * 60 * 1000,
@@ -115,11 +110,11 @@ ${formatRupiah(user.saldo)}
 👑 *PEMBAYARAN RESELLER*
 ━━━━━━━━━━━━━━━━━━
 
-💰 Harga:
-${formatRupiah(response.data.total_bayar || RESELLER_PRICE)}
+📦 Paket:
+${selectedPackage.label}
 
-📆 Aktif:
-30 hari
+💰 Harga:
+${formatRupiah(response.data.total_bayar || selectedPackage.price)}
 
 📄 Invoice:
 ${invoice}
@@ -127,7 +122,7 @@ ${invoice}
 ⏳ Berlaku:
 5 menit
 
-Scan QR untuk gabung reseller
+Scan QR untuk gabung reseller.
 ━━━━━━━━━━━━━━━━━━`)
 
     await paymentService.startPolling(invoice, userId, sock)
@@ -138,7 +133,7 @@ Scan QR untuk gabung reseller
 
     paidUser.role = "reseller"
     paidUser.saldo = 0
-    paidUser.expiredAt = now + RESELLER_DURATION
+    paidUser.expiredAt = now + Number(tx.durationMs || selectedPackage.durationMs)
     tx.status = "completed"
     tx.processedAt = now
     saveDB(paidDb)
@@ -148,8 +143,8 @@ Scan QR untuk gabung reseller
 ✅ *RESELLER AKTIF*
 ━━━━━━━━━━━━━━━━━━
 
-👑 Role:
-reseller
+👑 Paket:
+${tx.packageLabel || selectedPackage.label}
 
 📆 Expired:
 ${formatDate(paidUser.expiredAt)}
@@ -174,6 +169,61 @@ Silakan coba lagi nanti.${SUPPORT_TEXT}
 ━━━━━━━━━━━━━━━━━━`
     })
   }
+}
+
+function isResellerCommand(text) {
+  return text === "reseller" ||
+    text === "joinreseller" ||
+    text.startsWith("joinreseller ") ||
+    text === "join reseller" ||
+    text.startsWith("join reseller ") ||
+    text === "gabung reseller" ||
+    text.startsWith("gabung reseller ")
+}
+
+function parsePackage(text) {
+  if (/\b(1tahun|tahun|1 tahun|12bulan|12 bulan|year)\b/.test(text)) {
+    return { key: "1tahun", ...RESELLER_PACKAGES["1tahun"] }
+  }
+
+  if (/\b(1bulan|bulan|1 bulan|month)\b/.test(text)) {
+    return { key: "1bulan", ...RESELLER_PACKAGES["1bulan"] }
+  }
+
+  if (text === "joinreseller" || text === "join reseller" || text === "gabung reseller") {
+    return { key: "1bulan", ...RESELLER_PACKAGES["1bulan"] }
+  }
+
+  return null
+}
+
+function buildResellerMenu() {
+  return `━━━━━━━━━━━━━━━━━━
+👑 *RESELLER PREMIUMIN*
+━━━━━━━━━━━━━━━━━━
+
+Keuntungan:
+
+💸 Harga lebih murah
+⚡ Proses instan
+🔒 Transaksi aman
+
+━━━━━━━━━━━━━━━━━━
+💰 Harga:
+1 Bulan: ${formatRupiah(RESELLER_PACKAGES["1bulan"].price)}
+1 Tahun: ${formatRupiah(RESELLER_PACKAGES["1tahun"].price)}
+
+━━━━━━━━━━━━━━━━━━
+🛒 Ketik:
+joinreseller 1bulan
+joinreseller 1tahun
+
+━━━━━━━━━━━━━━━━━━
+Jika ingin bangun bot, hubungi admin.
+Harga bisa kita negosiasikan.
+
+Terima kasih, cuan bareng 🙏
+━━━━━━━━━━━━━━━━━━`
 }
 
 async function sendQr(sock, userId, data, caption) {

@@ -49,7 +49,7 @@ Ketik *stok* untuk melihat daftar produk aktif.${SUPPORT_TEXT}
       })
     }
 
-    if (Number(product.stock || 0) <= 0 || product.status === "soldout") {
+    if (!isProductAvailable(product)) {
       return sock.sendMessage(userId, {
         text: `━━━━━━━━━━━━━━━━━━
 📦 *STOK HABIS*
@@ -102,6 +102,11 @@ async function findProduct(productId) {
   return products.find(product => Number(product.id) === Number(productId)) || null
 }
 
+function isProductAvailable(product) {
+  const status = String(product.status || "").toLowerCase()
+  return Number(product.stock || 0) > 0 && !["soldout", "empty", "habis", "unavailable"].includes(status)
+}
+
 async function processNormalOrder(sock, userId, product) {
   const price = calculatePrice(product.price, "NORMAL")
   const uniqueCode = createUniqueCode()
@@ -134,7 +139,6 @@ async function processNormalOrder(sock, userId, product) {
   saveDB(db)
 
   await sendQr(sock, userId, deposit.data, buildPaymentCaption(product.name, price, uniqueCode, totalPay, invoice))
-
   await paymentService.startPolling(invoice, userId, sock)
 
   const { db: paidDb, tx } = paymentService.validatePaidInvoice(invoice, userId, "order_payment")
@@ -145,32 +149,18 @@ async function processNormalOrder(sock, userId, product) {
     tx.failedReason = orderResult?.message || "API order gagal"
     tx.processedAt = Date.now()
     saveDB(paidDb)
-
-    return sock.sendMessage(userId, {
-      text: `━━━━━━━━━━━━━━━━━━
-⚠️ *ORDER PERLU BANTUAN ADMIN*
-
-Pembayaran sudah diterima, tetapi order gagal dibuat otomatis.
-
-📦 Produk:
-${product.name}
-
-📄 Invoice:
-${invoice}
-
-Admin akan bantu proses manual.${SUPPORT_TEXT}
-━━━━━━━━━━━━━━━━━━`
-    })
+    return notifyManualHelp(sock, userId, product.name, invoice)
   }
 
+  const finalOrderData = await enrichOrderData(orderResult, invoice)
   tx.status = "completed"
   tx.processedAt = Date.now()
   tx.orderedAt = Date.now()
-  tx.orderData = orderResult.data || orderResult
+  tx.orderData = finalOrderData
   saveDB(paidDb)
 
   return sock.sendMessage(userId, {
-    text: `${buildOrderSuccess(product.name, totalPay, orderResult.data || orderResult, invoice)}
+    text: `${buildOrderSuccess(product.name, totalPay, finalOrderData, invoice)}
 
 💡 Mau lebih murah?
 
@@ -275,14 +265,15 @@ Silakan coba lagi nanti.${SUPPORT_TEXT}
       })
     }
 
+    const finalOrderData = await enrichOrderData(orderResult, invoice)
     tx.status = "completed"
     tx.processedAt = Date.now()
     tx.orderedAt = Date.now()
-    tx.orderData = orderResult.data || orderResult
+    tx.orderData = finalOrderData
     saveDB(latestDb)
 
     return sock.sendMessage(userId, {
-      text: `${buildOrderSuccess(product.name, price, orderResult.data || orderResult, invoice)}
+      text: `${buildOrderSuccess(product.name, price, finalOrderData, invoice)}
 
 💰 Saldo tersisa:
 ${formatRupiah(latestUser.saldo)}`
@@ -300,6 +291,39 @@ ${formatRupiah(latestUser.saldo)}`
     }
     throw error
   }
+}
+
+async function enrichOrderData(orderResult, invoice) {
+  if (hasAccountData(orderResult)) return orderResult.data || orderResult
+
+  try {
+    const status = await API.status(invoice)
+    if (status?.success && hasAccountData(status)) {
+      return status.data || status
+    }
+  } catch (error) {
+    log("ORDER", `Gagal mengambil detail akun ${invoice}: ${error.message}`)
+  }
+
+  return orderResult.data || orderResult
+}
+
+async function notifyManualHelp(sock, userId, productName, invoice) {
+  return sock.sendMessage(userId, {
+    text: `━━━━━━━━━━━━━━━━━━
+⚠️ *ORDER PERLU BANTUAN ADMIN*
+
+Pembayaran sudah diterima, tetapi order gagal dibuat otomatis.
+
+📦 Produk:
+${productName}
+
+📄 Invoice:
+${invoice}
+
+Admin akan bantu proses manual.${SUPPORT_TEXT}
+━━━━━━━━━━━━━━━━━━`
+  })
 }
 
 async function sendQr(sock, userId, data, caption) {
@@ -358,8 +382,6 @@ cancel ${invoice}
 }
 
 function buildOrderSuccess(productName, totalPay, orderData, invoice) {
-  const accountData = orderData?.account_data || orderData?.accounts || orderData?.data || "Data akun akan dikirim otomatis oleh sistem."
-
   return `━━━━━━━━━━━━━━━━━━
 ✅ *PEMBAYARAN BERHASIL*
 ━━━━━━━━━━━━━━━━━━
@@ -373,35 +395,117 @@ ${formatRupiah(totalPay)}
 ━━━━━━━━━━━━━━━━━━
 🔐 *DATA AKUN*
 
-${formatAccountData(accountData)}
+${formatAccountData(orderData)}
 
 ━━━━━━━━━━━━━━━━━━
 📄 Invoice:
 ${invoice}
 
 🙏 Terima kasih sudah order!
+Jika ada masalah bisa hubungi kami.
 ━━━━━━━━━━━━━━━━━━`
 }
 
-function formatAccountData(data) {
-  if (Array.isArray(data)) {
-    return data.map((item, index) => {
-      if (typeof item === "string") return `${index + 1}. ${item}`
-      return Object.entries(item).map(([key, value]) => `${formatAccountKey(key)}:\n${value}`).join("\n\n")
-    }).join("\n\n")
-  }
-
-  if (data && typeof data === "object") {
-    return Object.entries(data).map(([key, value]) => `${formatAccountKey(key)}:\n${value}`).join("\n\n")
-  }
-
-  return String(data || "Tidak tersedia")
+function hasAccountData(data) {
+  return extractAccounts(data).length > 0
 }
 
-function formatAccountKey(key) {
-  const lower = String(key).toLowerCase()
-  if (lower.includes("email") || lower.includes("user")) return "📧 Email"
-  if (lower.includes("pass")) return "🔑 Akses"
-  if (lower.includes("link") || lower.includes("url")) return "🔑 Akses"
-  return `🔹 ${key}`
+function formatAccountData(data) {
+  const accounts = extractAccounts(data)
+
+  if (accounts.length === 0) {
+    return "Data akun belum tersedia dari provider.\nSilakan cek *status <invoice>* atau hubungi admin."
+  }
+
+  return accounts.map(account => {
+    const product = account.productName ? `${account.productName}\n\n` : ""
+    const username = account.username ? `📧 Username: ${account.username}` : ""
+    const password = account.password ? `🔑 Password: ${account.password}` : ""
+    const access = !account.password && account.access ? `🔑 Akses: ${account.access}` : ""
+    const note = account.note ? `📝 Catatan: ${account.note}` : ""
+
+    return `${product}${[username, password, access, note].filter(Boolean).join("\n")}`.trim()
+  }).join("\n\n")
+}
+
+function extractAccounts(data, depth = 0) {
+  if (!data || depth > 4) return []
+
+  if (typeof data === "string") {
+    const parsed = parseAccountString(data)
+    return parsed ? [parsed] : []
+  }
+
+  if (Array.isArray(data)) {
+    return data.flatMap(item => extractAccounts(item, depth + 1))
+  }
+
+  if (typeof data !== "object") return []
+
+  const direct = normalizeAccountObject(data)
+  if (direct) return [direct]
+
+  const keys = ["account_data", "account", "accounts", "data", "result", "order", "orders", "items"]
+  for (const key of keys) {
+    const found = extractAccounts(data[key], depth + 1)
+    if (found.length) return found
+  }
+
+  return []
+}
+
+function normalizeAccountObject(obj) {
+  const username = pickValue(obj, ["username", "user", "email", "login", "akun"])
+  const password = pickValue(obj, ["password", "pass", "pwd", "sandi"])
+  const access = pickValue(obj, ["access", "akses", "link", "url", "note", "credential"])
+  const productName = pickValue(obj, ["productName", "product_name", "produk", "product"])
+
+  if (!username && !password && !access) return null
+
+  return {
+    productName,
+    username,
+    password,
+    access,
+    note: pickValue(obj, ["note", "catatan", "keterangan"])
+  }
+}
+
+function pickValue(obj, keys) {
+  for (const key of keys) {
+    if (obj?.[key] !== undefined && obj[key] !== null && String(obj[key]).trim() !== "") {
+      return String(obj[key]).trim()
+    }
+  }
+  return ""
+}
+
+function parseAccountString(value) {
+  const text = value.trim()
+  if (!text || /akan dikirim|pending|processing/i.test(text)) return null
+
+  const usernameMatch = text.match(/(?:username|email|user|login)\s*[:=]\s*([^\n|,]+)/i)
+  const passwordMatch = text.match(/(?:password|pass|pwd|sandi)\s*[:=]\s*([^\n|,]+)/i)
+
+  if (usernameMatch || passwordMatch) {
+    return {
+      username: usernameMatch?.[1]?.trim() || "",
+      password: passwordMatch?.[1]?.trim() || "",
+      access: !passwordMatch ? text : ""
+    }
+  }
+
+  const parts = text.split(/[|,;\n]/).map(part => part.trim()).filter(Boolean)
+  if (parts.length >= 2 && /@|http|www|[a-z0-9]/i.test(parts[0])) {
+    return {
+      username: parts[0],
+      password: parts[1]
+    }
+  }
+
+  if (/https?:\/\//i.test(text)) {
+    return { access: text }
+  }
+
+  return null
 }
