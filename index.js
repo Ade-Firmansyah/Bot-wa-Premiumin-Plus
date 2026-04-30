@@ -26,6 +26,10 @@ let reconnectTimer = null
 let isShuttingDown = false
 
 const MAX_RECONNECT_DELAY = 60000
+let signalErrorCount = 0
+let lastSignalRepairAt = 0
+
+installSignalErrorGuard()
 
 async function initBot() {
   try {
@@ -168,3 +172,43 @@ process.on("unhandledRejection", reason => {
 
 startWeb(PORT)
 initBot()
+
+function installSignalErrorGuard() {
+  const originalConsoleError = console.error.bind(console)
+
+  console.error = (...args) => {
+    const message = args.map(arg => {
+      if (arg instanceof Error) return arg.message
+      return String(arg)
+    }).join(" ")
+
+    if (isSignalSessionNoise(message)) {
+      signalErrorCount += 1
+
+      if (signalErrorCount === 1) {
+        log("SESSION", "Terdeteksi Signal session lama. Pesan lama yang gagal decrypt akan diabaikan.")
+      }
+
+      const now = Date.now()
+      if (signalErrorCount >= 3 && now - lastSignalRepairAt > 30000) {
+        lastSignalRepairAt = now
+        const removed = sessionManager.repairSignalSessions()
+        if (removed > 0) {
+          log("SESSION", "Signal session diperbaiki. Jika ada pesan lama yang gagal, minta user kirim ulang.")
+        }
+      }
+
+      return
+    }
+
+    originalConsoleError(...args)
+  }
+}
+
+function isSignalSessionNoise(message) {
+  const lower = message.toLowerCase()
+  return lower.includes("failed to decrypt message with any known session") ||
+    lower.includes("messagecountererror") ||
+    lower.includes("key used already or never filled") ||
+    lower.includes("session error:")
+}

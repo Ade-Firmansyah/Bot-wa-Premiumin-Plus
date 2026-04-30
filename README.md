@@ -168,6 +168,8 @@ npm start
 
 - QR tidak muncul: buka `/` dan cek log koneksi.
 - Kena `401`: bot akan clear session dan membuat QR baru otomatis.
+- Muncul `MessageCounterError` atau gagal decrypt pesan lama: bot akan membersihkan Signal session lama otomatis. Bisa juga jalankan `npm run repair-session`.
+- Ingin login ulang total: jalankan `npm run clear-session`, lalu `npm start` dan scan QR baru.
 - Payment pending terus: cek invoice dengan `status <invoice>`.
 - Reseller tidak bisa order: cek masa aktif dan saldo.
 - Akun tidak terkirim: cek `status <invoice>` atau hubungi admin.

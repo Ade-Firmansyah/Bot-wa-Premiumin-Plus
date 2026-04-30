@@ -8,6 +8,7 @@
     "start": "node index.js",
     "dev": "node index.js",
     "clear-session": "node -e \"import('./services/session.js').then(m => m.sessionManager.clear())\"",
+    "repair-session": "node -e \"import('./services/session.js').then(m => m.sessionManager.repairSignalSessions())\"",
     "test": "node --check index.js && node --check handler.js && node --check commands/order.js && node --check commands/deposit.js && node --check commands/reseller.js && node --check services/payment.js && node --check services/queue.js"
   },
   "dependencies": {
@@ -18,5 +19,8 @@
     "node-fetch": "^3.3.2",
     "pino": "^9.0.0",
     "qrcode": "^1.5.4"
+  },
+  "overrides": {
+    "protobufjs": "7.5.6"
   }
 }

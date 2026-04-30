@@ -28,6 +28,34 @@ function isSessionCorrupted() {
   }
 }
 
+function repairSignalSessions() {
+  try {
+    if (!fs.existsSync(SESSION_DIR)) return 0
+
+    let removed = 0
+    const stalePrefixes = [
+      "session-",
+      "sender-key-"
+    ]
+
+    for (const file of fs.readdirSync(SESSION_DIR)) {
+      if (!stalePrefixes.some(prefix => file.startsWith(prefix))) continue
+
+      fs.unlinkSync(path.join(SESSION_DIR, file))
+      removed += 1
+    }
+
+    if (removed > 0) {
+      log("SESSION", `${removed} Signal session lama dibersihkan`)
+    }
+
+    return removed
+  } catch (error) {
+    log("SESSION", `Gagal membersihkan Signal session: ${error.message}`)
+    return 0
+  }
+}
+
 export const sessionManager = {
   ensure: ensureSessionDir,
 
@@ -45,6 +73,8 @@ export const sessionManager = {
   },
 
   isCorrupted: () => isSessionCorrupted(),
+
+  repairSignalSessions,
 
   softReset: () => {
     try {
