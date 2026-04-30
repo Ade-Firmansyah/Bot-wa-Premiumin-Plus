@@ -4,6 +4,7 @@ import { paymentService } from "../services/payment.js"
 import {
   calculatePrice,
   createInvoice,
+  createUniqueCode,
   downgradeExpiredUser,
   ensureUser,
   formatRupiah,
@@ -15,8 +16,7 @@ import {
 } from "../utils/helper.js"
 
 export default async (sock, msg) => {
-  const rawText = msg.message?.conversation || ""
-  const text = rawText.trim().toLowerCase()
+  const text = (msg.message?.conversation || "").trim().toLowerCase()
   if (!text.startsWith("buy")) return
 
   const userId = msg.key.participant || msg.key.remoteJid
@@ -38,6 +38,7 @@ buy 12
 
   try {
     const product = await findProduct(Number(productId))
+
     if (!product) {
       return sock.sendMessage(userId, {
         text: `━━━━━━━━━━━━━━━━━━
@@ -102,8 +103,10 @@ async function findProduct(productId) {
 }
 
 async function processNormalOrder(sock, userId, product) {
-  const amount = calculatePrice(product.price, "NORMAL")
-  const deposit = await API.createDeposit(amount)
+  const price = calculatePrice(product.price, "NORMAL")
+  const uniqueCode = createUniqueCode()
+  const totalPay = price + uniqueCode
+  const deposit = await API.createDeposit(totalPay)
 
   if (!deposit?.success || !deposit?.data?.invoice) {
     throw new Error(deposit?.message || "Gagal membuat pembayaran")
@@ -118,7 +121,9 @@ async function processNormalOrder(sock, userId, product) {
     userId,
     productId: product.id,
     productName: product.name,
-    amount,
+    price,
+    uniqueCode,
+    amount: totalPay,
     basePrice: Number(product.price || 0),
     status: "pending",
     createdAt: Date.now(),
@@ -128,18 +133,7 @@ async function processNormalOrder(sock, userId, product) {
   }
   saveDB(db)
 
-  await sendQr(sock, userId, deposit.data, `━━━━━━━━━━━━━━━━━━
-🧾 *PEMBAYARAN ORDER*
-
-📦 Produk: ${product.name}
-💰 Total: ${formatRupiah(amount)}
-🧾 Invoice: ${invoice}
-
-📱 Scan QRIS untuk membayar.
-⏳ Batas waktu: 5 menit
-
-Setelah pembayaran sukses, order dibuat otomatis.${SUPPORT_TEXT}
-━━━━━━━━━━━━━━━━━━`)
+  await sendQr(sock, userId, deposit.data, buildPaymentCaption(product.name, price, uniqueCode, totalPay, invoice))
 
   await paymentService.startPolling(invoice, userId, sock)
 
@@ -158,10 +152,13 @@ Setelah pembayaran sukses, order dibuat otomatis.${SUPPORT_TEXT}
 
 Pembayaran sudah diterima, tetapi order gagal dibuat otomatis.
 
-📦 Produk: ${product.name}
-🧾 Invoice: ${invoice}
+📦 Produk:
+${product.name}
 
-Saldo tidak digunakan untuk user biasa. Admin akan bantu proses manual.${SUPPORT_TEXT}
+📄 Invoice:
+${invoice}
+
+Admin akan bantu proses manual.${SUPPORT_TEXT}
 ━━━━━━━━━━━━━━━━━━`
     })
   }
@@ -173,7 +170,12 @@ Saldo tidak digunakan untuk user biasa. Admin akan bantu proses manual.${SUPPORT
   saveDB(paidDb)
 
   return sock.sendMessage(userId, {
-    text: buildOrderSuccess("ORDER BERHASIL", product.name, amount, orderResult.data || orderResult, invoice)
+    text: `${buildOrderSuccess(product.name, totalPay, orderResult.data || orderResult, invoice)}
+
+💡 Mau lebih murah?
+
+Gabung reseller sekarang 👇
+ketik: reseller`
   })
 }
 
@@ -197,9 +199,10 @@ Silakan ketik *reseller* untuk gabung atau perpanjang.${SUPPORT_TEXT}
   if (user.saldo <= 0) {
     return sock.sendMessage(userId, {
       text: `━━━━━━━━━━━━━━━━━━
-💳 *SALDO KOSONG*
+💰 *SALDO KOSONG*
 
-Saldo reseller kamu: ${formatRupiah(user.saldo)}
+Saldo reseller kamu:
+${formatRupiah(user.saldo)}
 
 Silakan deposit dulu:
 deposit 10000
@@ -212,11 +215,17 @@ deposit 10000
       text: `━━━━━━━━━━━━━━━━━━
 ❌ *SALDO TIDAK CUKUP*
 
-📦 Produk: ${product.name}
-💰 Harga reseller: ${formatRupiah(price)}
-💳 Saldo kamu: ${formatRupiah(user.saldo)}
+📦 Produk:
+${product.name}
 
-Minimal saldo disarankan: ${formatRupiah(10000)}
+💰 Harga reseller:
+${formatRupiah(price)}
+
+💰 Saldo kamu:
+${formatRupiah(user.saldo)}
+
+Minimal saldo disarankan:
+${formatRupiah(10000)}
 ━━━━━━━━━━━━━━━━━━`
     })
   }
@@ -237,7 +246,6 @@ Minimal saldo disarankan: ${formatRupiah(10000)}
 
   try {
     const orderResult = await API.order(product.id, 1, invoice)
-
     const latestDb = loadDB()
     const latestUser = ensureUser(latestDb, userId)
     const tx = latestDb.transactions[invoice]
@@ -253,9 +261,14 @@ Minimal saldo disarankan: ${formatRupiah(10000)}
         text: `━━━━━━━━━━━━━━━━━━
 ❌ *ORDER RESELLER GAGAL*
 
-📦 Produk: ${product.name}
-💰 Refund: ${formatRupiah(price)}
-💳 Saldo sekarang: ${formatRupiah(latestUser.saldo)}
+📦 Produk:
+${product.name}
+
+💰 Refund:
+${formatRupiah(price)}
+
+💰 Saldo sekarang:
+${formatRupiah(latestUser.saldo)}
 
 Silakan coba lagi nanti.${SUPPORT_TEXT}
 ━━━━━━━━━━━━━━━━━━`
@@ -269,9 +282,10 @@ Silakan coba lagi nanti.${SUPPORT_TEXT}
     saveDB(latestDb)
 
     return sock.sendMessage(userId, {
-      text: `${buildOrderSuccess("ORDER RESELLER BERHASIL", product.name, price, orderResult.data || orderResult, invoice)}
+      text: `${buildOrderSuccess(product.name, price, orderResult.data || orderResult, invoice)}
 
-💳 Saldo tersisa: ${formatRupiah(latestUser.saldo)}`
+💰 Saldo tersisa:
+${formatRupiah(latestUser.saldo)}`
     })
   } catch (error) {
     const latestDb = loadDB()
@@ -292,32 +306,80 @@ async function sendQr(sock, userId, data, caption) {
   const qrRaw = data?.qr_image || data?.qr || data?.qris || ""
   const qrImage = typeof qrRaw === "string" && qrRaw.startsWith("data:image") ? qrRaw.split(",")[1] : qrRaw
 
-  if (qrImage) {
+  if (!qrImage) {
     return sock.sendMessage(userId, {
-      image: Buffer.from(qrImage, "base64"),
-      caption
+      text: "❌ QR tidak tersedia, silakan ulangi transaksi"
     })
   }
 
   return sock.sendMessage(userId, {
-    text: `${caption}\n\n⚠️ QR belum tersedia dari provider. Coba ulangi atau hubungi admin.`
+    image: Buffer.from(qrImage, "base64"),
+    caption
   })
 }
 
-function buildOrderSuccess(title, productName, amount, orderData, invoice) {
+function buildPaymentCaption(productName, price, uniqueCode, totalPay, invoice) {
+  return `━━━━━━━━━━━━━━━━━━
+🛒 *PEMBELIAN PRODUK*
+━━━━━━━━━━━━━━━━━━
+
+📦 Produk:
+${productName}
+
+💰 Harga:
+${formatRupiah(price)}
+
+🔢 Kode Unik:
+${uniqueCode}
+
+💵 Total Bayar:
+${formatRupiah(totalPay)}
+
+📄 Invoice:
+${invoice}
+
+━━━━━━━━━━━━━━━━━━
+📱 *Scan QR di atas untuk bayar*
+
+⏳ Berlaku: 5 menit
+
+━━━━━━━━━━━━━━━━━━
+📌 *Cara bayar:*
+1. Scan QRIS
+2. Selesaikan pembayaran
+3. Tunggu otomatis diproses
+
+⚠️ Harus sesuai nominal
+━━━━━━━━━━━━━━━━━━
+
+❌ Batal:
+cancel ${invoice}
+━━━━━━━━━━━━━━━━━━`
+}
+
+function buildOrderSuccess(productName, totalPay, orderData, invoice) {
   const accountData = orderData?.account_data || orderData?.accounts || orderData?.data || "Data akun akan dikirim otomatis oleh sistem."
 
   return `━━━━━━━━━━━━━━━━━━
-✅ *${title}*
+✅ *PEMBAYARAN BERHASIL*
+━━━━━━━━━━━━━━━━━━
 
-📦 Produk: ${productName}
-💰 Total: ${formatRupiah(amount)}
-🧾 Invoice: ${invoice}
+📦 Produk:
+${productName}
 
+💰 Total:
+${formatRupiah(totalPay)}
+
+━━━━━━━━━━━━━━━━━━
 🔐 *DATA AKUN*
+
 ${formatAccountData(accountData)}
 
-Terima kasih 🙏
+━━━━━━━━━━━━━━━━━━
+📄 Invoice:
+${invoice}
+
+🙏 Terima kasih sudah order!
 ━━━━━━━━━━━━━━━━━━`
 }
 
@@ -325,13 +387,21 @@ function formatAccountData(data) {
   if (Array.isArray(data)) {
     return data.map((item, index) => {
       if (typeof item === "string") return `${index + 1}. ${item}`
-      return `${index + 1}. ${Object.entries(item).map(([key, value]) => `${key}: ${value}`).join("\n")}`
+      return Object.entries(item).map(([key, value]) => `${formatAccountKey(key)}:\n${value}`).join("\n\n")
     }).join("\n\n")
   }
 
   if (data && typeof data === "object") {
-    return Object.entries(data).map(([key, value]) => `${key}: ${value}`).join("\n")
+    return Object.entries(data).map(([key, value]) => `${formatAccountKey(key)}:\n${value}`).join("\n\n")
   }
 
   return String(data || "Tidak tersedia")
+}
+
+function formatAccountKey(key) {
+  const lower = String(key).toLowerCase()
+  if (lower.includes("email") || lower.includes("user")) return "📧 Email"
+  if (lower.includes("pass")) return "🔑 Akses"
+  if (lower.includes("link") || lower.includes("url")) return "🔑 Akses"
+  return `🔹 ${key}`
 }

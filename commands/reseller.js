@@ -12,7 +12,7 @@ import {
   SUPPORT_TEXT
 } from "../utils/helper.js"
 
-const RESELLER_PRICE = Number(process.env.RESELLER_PRICE || 30000)
+const RESELLER_PRICE = Number(process.env.RESELLER_PRICE || 50000)
 const RESELLER_DURATION = 30 * 24 * 60 * 60 * 1000
 
 export default async (sock, msg) => {
@@ -31,17 +31,21 @@ export default async (sock, msg) => {
         return sock.sendMessage(userId, {
           text: `━━━━━━━━━━━━━━━━━━
 👑 *RESELLER AKTIF*
+━━━━━━━━━━━━━━━━━━
 
-⏰ Expired: ${formatDate(user.expiredAt)}
-💳 Saldo: ${formatRupiah(user.saldo)}
+💰 Saldo:
+${formatRupiah(user.saldo)}
 
-📦 Lihat produk:
+📆 Expired:
+${formatDate(user.expiredAt)}
+
+📦 Ketik:
 stok
 
-🛒 Order reseller:
-buy <id_produk>
+🛒 Order:
+buy <id>
 
-💳 Deposit:
+💰 Deposit:
 deposit 50000
 ━━━━━━━━━━━━━━━━━━`
         })
@@ -49,18 +53,25 @@ deposit 50000
 
       return sock.sendMessage(userId, {
         text: `━━━━━━━━━━━━━━━━━━
-👑 *GABUNG RESELLER*
+👑 *RESELLER PREMIUMIN*
+━━━━━━━━━━━━━━━━━━
 
-Benefit:
-✅ Harga reseller
-✅ Order pakai saldo
-✅ Proses antre aman
+Keuntungan:
 
-💰 Biaya: ${formatRupiah(RESELLER_PRICE)}
-⏳ Masa aktif: 30 hari
+💸 Harga lebih murah
+⚡ Proses instan
+🔒 Transaksi aman
 
-Untuk gabung, ketik:
-joinreseller${SUPPORT_TEXT}
+━━━━━━━━━━━━━━━━━━
+💰 Harga:
+${formatRupiah(RESELLER_PRICE)}
+
+📆 Aktif:
+30 hari
+
+━━━━━━━━━━━━━━━━━━
+🛒 Ketik:
+joinreseller
 ━━━━━━━━━━━━━━━━━━`
       })
     }
@@ -70,8 +81,11 @@ joinreseller${SUPPORT_TEXT}
         text: `━━━━━━━━━━━━━━━━━━
 ✅ *SUDAH RESELLER*
 
-⏰ Expired: ${formatDate(user.expiredAt)}
-💳 Saldo: ${formatRupiah(user.saldo)}
+📆 Expired:
+${formatDate(user.expiredAt)}
+
+💰 Saldo:
+${formatRupiah(user.saldo)}
 ━━━━━━━━━━━━━━━━━━`
       })
     }
@@ -99,15 +113,21 @@ joinreseller${SUPPORT_TEXT}
 
     await sendQr(sock, userId, response.data, `━━━━━━━━━━━━━━━━━━
 👑 *PEMBAYARAN RESELLER*
+━━━━━━━━━━━━━━━━━━
 
-🧾 Invoice: ${invoice}
-💰 Total: ${formatRupiah(response.data.total_bayar || RESELLER_PRICE)}
-⏳ Masa aktif: 30 hari
+💰 Harga:
+${formatRupiah(response.data.total_bayar || RESELLER_PRICE)}
 
-📱 Scan QRIS untuk membayar.
-⏰ Batas waktu: 5 menit
+📆 Aktif:
+30 hari
 
-Jika pembayaran gagal, akun tetap user biasa.
+📄 Invoice:
+${invoice}
+
+⏳ Berlaku:
+5 menit
+
+Scan QR untuk gabung reseller
 ━━━━━━━━━━━━━━━━━━`)
 
     await paymentService.startPolling(invoice, userId, sock)
@@ -126,12 +146,18 @@ Jika pembayaran gagal, akun tetap user biasa.
     return sock.sendMessage(userId, {
       text: `━━━━━━━━━━━━━━━━━━
 ✅ *RESELLER AKTIF*
+━━━━━━━━━━━━━━━━━━
 
-👑 Role: reseller
-⏰ Expired: ${formatDate(paidUser.expiredAt)}
-💳 Saldo awal: ${formatRupiah(0)}
+👑 Role:
+reseller
 
-Silakan deposit saldo:
+📆 Expired:
+${formatDate(paidUser.expiredAt)}
+
+💰 Saldo awal:
+${formatRupiah(0)}
+
+Silakan isi saldo:
 deposit 50000
 ━━━━━━━━━━━━━━━━━━`
     })
@@ -154,14 +180,14 @@ async function sendQr(sock, userId, data, caption) {
   const qrRaw = data?.qr_image || data?.qr || data?.qris || ""
   const qrImage = typeof qrRaw === "string" && qrRaw.startsWith("data:image") ? qrRaw.split(",")[1] : qrRaw
 
-  if (qrImage) {
+  if (!qrImage) {
     return sock.sendMessage(userId, {
-      image: Buffer.from(qrImage, "base64"),
-      caption
+      text: "❌ QR tidak tersedia, silakan ulangi transaksi"
     })
   }
 
   return sock.sendMessage(userId, {
-    text: `${caption}\n\n⚠️ QR belum tersedia dari provider. Coba ulangi atau hubungi admin.`
+    image: Buffer.from(qrImage, "base64"),
+    caption
   })
 }

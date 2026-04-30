@@ -1,10 +1,7 @@
-import moment from "moment-timezone"
-
 export function greeting() {
-  const hour = Number(moment().tz("Asia/Jakarta").format("HH"))
-
-  if (hour >= 4 && hour < 10) return "Pagi 🌄"
-  if (hour >= 10 && hour < 15) return "Siang ☀️"
-  if (hour >= 15 && hour < 18) return "Sore 🌆"
-  return "Malam 🌙"
+  const hour = new Date().getHours()
+  if (hour >= 4 && hour < 11) return "Selamat Pagi 🌅"
+  if (hour >= 11 && hour < 15) return "Selamat Siang ☀️"
+  if (hour >= 15 && hour < 18) return "Selamat Sore 🌤️"
+  return "Selamat Malam 🌙"
 }

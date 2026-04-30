@@ -1,5 +1,5 @@
 import { API } from "./api.js"
-import { formatRupiah, loadDB, log, saveDB, SUPPORT_TEXT } from "../utils/helper.js"
+import { loadDB, log, saveDB } from "../utils/helper.js"
 
 const PAID_STATUS = new Set(["PAID", "SUCCESS", "SETTLED"])
 const FAILED_STATUS = new Set(["CANCELLED", "CANCELED", "FAILED", "EXPIRED"])
@@ -9,17 +9,16 @@ class PaymentService {
     this.activePolls = new Map()
     this.POLL_INTERVAL = 5000
     this.TIMEOUT = 5 * 60 * 1000
+    this.REMINDER_AT = 3 * 60 * 1000
     this.MAX_PAID_AGE = 10 * 60 * 1000
   }
 
   assertInvoice(invoice, userId) {
     const tx = loadDB().transactions?.[invoice]
-
     if (!tx) throw new Error("Invoice tidak ditemukan")
     if (tx.userId !== userId) throw new Error("Invoice bukan milik user ini")
     if (tx.status !== "pending") throw new Error("Invoice sudah dipakai atau tidak aktif")
     if (tx.processedAt) throw new Error("Invoice sudah pernah diproses")
-
     return tx
   }
 
@@ -52,12 +51,14 @@ class PaymentService {
     let settled = false
     let intervalId = null
     let timeoutId = null
+    let reminderId = null
 
     const cleanup = () => {
       if (settled) return
       settled = true
       if (intervalId) clearInterval(intervalId)
       if (timeoutId) clearTimeout(timeoutId)
+      if (reminderId) clearTimeout(reminderId)
       this.activePolls.delete(invoice)
     }
 
@@ -85,12 +86,13 @@ class PaymentService {
         }
 
         await this.safeSend(sock, userId, `━━━━━━━━━━━━━━━━━━
-⏰ *PEMBAYARAN EXPIRED*
+❌ *PEMBAYARAN EXPIRED*
+━━━━━━━━━━━━━━━━━━
 
-🧾 Invoice: ${invoice}
-⏳ Batas waktu: 5 menit
+Waktu pembayaran habis (5 menit)
 
-Silakan buat pembayaran baru jika masih ingin melanjutkan.${SUPPORT_TEXT}
+💡 Silakan ulangi transaksi:
+ketik *buy <id>*
 ━━━━━━━━━━━━━━━━━━`)
 
         finish(new Error("Payment timeout"), null)
@@ -117,10 +119,11 @@ Silakan buat pembayaran baru jika masih ingin melanjutkan.${SUPPORT_TEXT}
             saveDB(db)
 
             await this.safeSend(sock, userId, `━━━━━━━━━━━━━━━━━━
-✅ *PEMBAYARAN DITERIMA*
+✅ *PEMBAYARAN BERHASIL*
+━━━━━━━━━━━━━━━━━━
 
-🧾 Invoice: ${invoice}
-💰 Total: ${formatRupiah(tx.amount || tx.price || 0)}
+📄 Invoice:
+${invoice}
 
 Pesanan sedang diproses otomatis.
 ━━━━━━━━━━━━━━━━━━`)
@@ -136,11 +139,15 @@ Pesanan sedang diproses otomatis.
 
             await this.safeSend(sock, userId, `━━━━━━━━━━━━━━━━━━
 ❌ *PEMBAYARAN GAGAL*
+━━━━━━━━━━━━━━━━━━
 
-🧾 Invoice: ${invoice}
-📌 Status: ${status}
+📄 Invoice:
+${invoice}
 
-Tidak ada saldo atau akses yang ditambahkan.${SUPPORT_TEXT}
+Status:
+${status}
+
+Tidak ada saldo, reseller, atau order yang diproses.
 ━━━━━━━━━━━━━━━━━━`)
 
             return finish(new Error("Payment cancelled"), null)
@@ -152,17 +159,46 @@ Tidak ada saldo atau akses yang ditambahkan.${SUPPORT_TEXT}
 
       intervalId = setInterval(checkPayment, this.POLL_INTERVAL)
       timeoutId = setTimeout(() => markCancelled("TIMEOUT"), this.TIMEOUT)
+      reminderId = setTimeout(() => this.sendReminder(sock, userId, invoice), this.REMINDER_AT)
+
+      this.safeSend(sock, userId, `━━━━━━━━━━━━━━━━━━
+⏳ *MENUNGGU PEMBAYARAN*
+
+Kami sedang menunggu pembayaran Anda...
+
+📄 Invoice:
+${invoice}
+
+Status akan otomatis diperbarui
+━━━━━━━━━━━━━━━━━━`)
+
       checkPayment()
     })
 
     this.activePolls.set(invoice, {
       promise,
-      cancel: () => {
-        cleanup()
-      }
+      cancel: () => cleanup()
     })
 
     return promise
+  }
+
+  async sendReminder(sock, userId, invoice) {
+    const tx = loadDB().transactions?.[invoice]
+    if (!tx || tx.status !== "pending") return
+
+    await this.safeSend(sock, userId, `━━━━━━━━━━━━━━━━━━
+⚠️ *PENGINGAT PEMBAYARAN*
+
+Invoice Anda belum dibayar:
+
+${invoice}
+
+⏳ Sisa waktu:
+2 menit
+
+Segera selesaikan ya 🙏
+━━━━━━━━━━━━━━━━━━`)
   }
 
   async safeSend(sock, userId, text) {

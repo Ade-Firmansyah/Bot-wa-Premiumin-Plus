@@ -27,7 +27,7 @@ Buat file `.env` di root project:
 ```env
 API_KEY=isi_api_key_premku
 PORT=3000
-RESELLER_PRICE=30000
+RESELLER_PRICE=50000
 LOG_LEVEL=silent
 ```
 
@@ -35,7 +35,7 @@ Catatan:
 
 - `API_KEY` dipakai untuk akses API provider.
 - `PORT` dipakai web QR login dan health check.
-- `RESELLER_PRICE` opsional, default `30000`.
+- `RESELLER_PRICE` opsional, default `50000`.
 
 ## Menjalankan Bot
 

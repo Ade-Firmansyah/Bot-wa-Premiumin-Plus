@@ -193,7 +193,11 @@ export function formatDate(timestamp) {
 
 export function createInvoice(prefix = "INV") {
   const random = Math.floor(Math.random() * 900000 + 100000)
-  return `${prefix}${Date.now()}${random}`
+  return `${prefix}-${Date.now()}${random}`
+}
+
+export function createUniqueCode() {
+  return Math.floor(Math.random() * 200) + 100
 }
 
 export function log(type, msg) {

@@ -21,9 +21,10 @@ export default async (sock, msg) => {
   if (!Number.isInteger(amount) || amount < 10000) {
     return sock.sendMessage(userId, {
       text: `━━━━━━━━━━━━━━━━━━
-💳 *DEPOSIT RESELLER*
+💰 *DEPOSIT SALDO*
+━━━━━━━━━━━━━━━━━━
 
-Minimal deposit:
+Minimal:
 ${formatRupiah(10000)}
 
 Contoh:
@@ -50,12 +51,14 @@ ${formatRupiah(50000000)}${SUPPORT_TEXT}
     if (!isResellerActive(user)) {
       return sock.sendMessage(userId, {
         text: `━━━━━━━━━━━━━━━━━━
-🔐 *KHUSUS RESELLER*
+🔒 *KHUSUS RESELLER*
 
 Deposit saldo hanya untuk reseller aktif.
-User biasa membeli langsung dengan QR saat ketik *buy <id>*.
 
-Ketik *reseller* untuk bergabung.${SUPPORT_TEXT}
+User biasa cukup ketik:
+buy <id>
+
+Ketik *reseller* untuk gabung reseller.${SUPPORT_TEXT}
 ━━━━━━━━━━━━━━━━━━`
       })
     }
@@ -82,14 +85,19 @@ Ketik *reseller* untuk bergabung.${SUPPORT_TEXT}
     saveDB(freshDb)
 
     await sendQr(sock, userId, response.data, `━━━━━━━━━━━━━━━━━━
-💳 *DEPOSIT SALDO*
+💰 *DEPOSIT SALDO*
+━━━━━━━━━━━━━━━━━━
 
-🧾 Invoice: ${invoice}
-💰 Total: ${formatRupiah(response.data.total_bayar || amount)}
+Jumlah:
+${formatRupiah(response.data.total_bayar || amount)}
 
-📱 Scan QRIS untuk membayar.
-⏳ Batas waktu: 5 menit
-🔎 Bot cek pembayaran setiap 5 detik.
+📄 Invoice:
+${invoice}
+
+⏳ Berlaku:
+5 menit
+
+Scan QR untuk isi saldo
 ━━━━━━━━━━━━━━━━━━`)
 
     await paymentService.startPolling(invoice, userId, sock)
@@ -104,10 +112,16 @@ Ketik *reseller* untuk bergabung.${SUPPORT_TEXT}
     return sock.sendMessage(userId, {
       text: `━━━━━━━━━━━━━━━━━━
 ✅ *DEPOSIT BERHASIL*
+━━━━━━━━━━━━━━━━━━
 
-🧾 Invoice: ${invoice}
-💰 Masuk: ${formatRupiah(tx.amount || amount)}
-💳 Saldo sekarang: ${formatRupiah(paidUser.saldo)}
+📄 Invoice:
+${invoice}
+
+💰 Masuk:
+${formatRupiah(tx.amount || amount)}
+
+💰 Saldo sekarang:
+${formatRupiah(paidUser.saldo)}
 
 Ketik *stok* untuk melihat produk reseller.
 ━━━━━━━━━━━━━━━━━━`
@@ -131,14 +145,14 @@ async function sendQr(sock, userId, data, caption) {
   const qrRaw = data?.qr_image || data?.qr || data?.qris || ""
   const qrImage = typeof qrRaw === "string" && qrRaw.startsWith("data:image") ? qrRaw.split(",")[1] : qrRaw
 
-  if (qrImage) {
+  if (!qrImage) {
     return sock.sendMessage(userId, {
-      image: Buffer.from(qrImage, "base64"),
-      caption
+      text: "❌ QR tidak tersedia, silakan ulangi transaksi"
     })
   }
 
   return sock.sendMessage(userId, {
-    text: `${caption}\n\n⚠️ QR belum tersedia dari provider. Coba ulangi atau hubungi admin.`
+    image: Buffer.from(qrImage, "base64"),
+    caption
   })
 }

@@ -12,7 +12,7 @@ import pino from "pino"
 import handler from "./handler.js"
 import { PORT } from "./config.js"
 import { sessionManager, shouldClearSession } from "./services/session.js"
-import { setConnected, setQR, startWeb } from "./services/web.js"
+import { clearQR, setConnected, setQR, startWeb } from "./services/web.js"
 import { log } from "./utils/helper.js"
 
 const logger = pino({
@@ -87,7 +87,7 @@ function handleConnectionUpdate(update) {
     log("WHATSAPP", `Koneksi tertutup, code=${statusCode || reason || "unknown"}`)
 
     if (statusCode === DisconnectReason.loggedOut) {
-      sessionManager.clear()
+      resetSessionAndReconnect("Akun logout atau session 401")
       return
     }
 
@@ -97,11 +97,21 @@ function handleConnectionUpdate(update) {
       reason === DisconnectReason.connectionReplaced ||
       shouldClearSession(statusCode, lastDisconnect?.error)
     ) {
-      sessionManager.clear()
+      resetSessionAndReconnect("Session invalid atau terganti")
+      return
     }
 
     scheduleReconnect()
   }
+}
+
+function resetSessionAndReconnect(reason) {
+  log("SESSION", `${reason}, membuat QR login baru`)
+  clearQR()
+  sessionManager.clear()
+  sessionManager.ensure()
+  reconnectDelay = 1000
+  scheduleReconnect()
 }
 
 async function handleMessagesUpsert({ messages, type }) {

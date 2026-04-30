@@ -36,7 +36,7 @@ Periksa kembali nomor invoice.${SUPPORT_TEXT}
     if (tx.userId !== userId) {
       return sock.sendMessage(userId, {
         text: `━━━━━━━━━━━━━━━━━━
-🔐 *AKSES DITOLAK*
+🔒 *AKSES DITOLAK*
 
 Invoice ini bukan milik akun kamu.
 ━━━━━━━━━━━━━━━━━━`
@@ -72,8 +72,11 @@ ${response?.message || "Provider menolak pembatalan."}${SUPPORT_TEXT}
       text: `━━━━━━━━━━━━━━━━━━
 ✅ *PEMBAYARAN DIBATALKAN*
 
-🧾 Invoice: ${invoice}
-💰 Total: ${formatRupiah(tx.amount || 0)}
+📄 Invoice:
+${invoice}
+
+💰 Total:
+${formatRupiah(tx.amount || 0)}
 
 Tidak ada saldo, reseller, atau order yang diproses.
 ━━━━━━━━━━━━━━━━━━`

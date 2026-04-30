@@ -11,13 +11,13 @@ export default async (sock, msg) => {
   if (!invoice) {
     return sock.sendMessage(userId, {
       text: `━━━━━━━━━━━━━━━━━━
-📊 *CEK STATUS*
+📄 *CEK STATUS*
 
 Format:
 status <invoice>
 
 Contoh:
-status INV123456
+status INV-123456
 ━━━━━━━━━━━━━━━━━━`
     })
   }
@@ -30,7 +30,7 @@ status INV123456
       if (tx.userId !== userId) {
         return sock.sendMessage(userId, {
           text: `━━━━━━━━━━━━━━━━━━
-🔐 *AKSES DITOLAK*
+🔒 *AKSES DITOLAK*
 
 Invoice ini bukan milik akun kamu.${SUPPORT_TEXT}
 ━━━━━━━━━━━━━━━━━━`
@@ -51,15 +51,20 @@ Invoice tidak ada di database bot atau provider.${SUPPORT_TEXT}
       })
     }
 
-    const status = response.status || response.data?.status || "Unknown"
+    const remoteStatus = response.status || response.data?.status || "Unknown"
     const amount = response.total || response.data?.amount || 0
     return sock.sendMessage(userId, {
       text: `━━━━━━━━━━━━━━━━━━
-📊 *STATUS INVOICE*
+📄 *STATUS INVOICE*
 
-🧾 Invoice: ${invoice}
-📌 Status: ${status}
-💰 Total: ${formatRupiah(amount)}
+📄 Invoice:
+${invoice}
+
+📌 Status:
+${remoteStatus}
+
+💰 Total:
+${formatRupiah(amount)}
 ━━━━━━━━━━━━━━━━━━`
     })
   } catch (error) {
@@ -83,22 +88,35 @@ function buildLocalStatus(invoice, tx) {
   }[tx.type] || tx.type
 
   let message = `━━━━━━━━━━━━━━━━━━
-📊 *STATUS TRANSAKSI*
+📄 *STATUS TRANSAKSI*
 
-🧾 Invoice: ${invoice}
-📌 Jenis: ${typeLabel}
-📍 Status: ${tx.status}
-💰 Total: ${formatRupiah(tx.amount || tx.price || 0)}
-🕒 Dibuat: ${formatDate(tx.createdAt)}
+📄 Invoice:
+${invoice}
+
+📌 Jenis:
+${typeLabel}
+
+📌 Status:
+${tx.status}
+
+💰 Total:
+${formatRupiah(tx.amount || tx.price || 0)}
+
+⏳ Dibuat:
+${formatDate(tx.createdAt)}
 `
 
   if (tx.productName) {
-    message += `📦 Produk: ${tx.productName}\n`
+    message += `
+📦 Produk:
+${tx.productName}
+`
   }
 
   if (tx.status === "completed" && tx.orderData) {
     message += `
 🔐 *DATA AKUN*
+
 ${formatAccountData(tx.orderData.account_data || tx.orderData.accounts || tx.orderData)}
 `
   }

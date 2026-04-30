@@ -1,6 +1,7 @@
 import { API } from "../services/api.js"
 import {
   calculatePrice,
+  createUniqueCode,
   downgradeExpiredUser,
   formatRupiah,
   isResellerActive,
@@ -39,8 +40,11 @@ Silakan coba beberapa saat lagi.${SUPPORT_TEXT}
     let message = `━━━━━━━━━━━━━━━━━━
 📦 *STOK PREMIUMIN PLUS*
 
-👤 Status: ${reseller ? "Reseller" : "User biasa"}
-${reseller ? `💳 Saldo: ${formatRupiah(user.saldo)}\n` : "💳 Pembelian: langsung QRIS\n"}━━━━━━━━━━━━━━━━━━
+👤 Status:
+${reseller ? "Reseller" : "User biasa"}
+
+${reseller ? `💰 Saldo:\n${formatRupiah(user.saldo)}` : "💰 Pembelian:\nLangsung QRIS"}
+━━━━━━━━━━━━━━━━━━
 
 `
 
@@ -54,10 +58,12 @@ ${empty.slice(0, 10).map(product => `❌ ${product.name}`).join("\n") || "-"}
       message += available.map(product => {
         const role = reseller ? "RESELLER" : "NORMAL"
         const price = Number(product.price_reseller && reseller ? product.price_reseller : calculatePrice(product.price, role))
+        const estimatedTotal = reseller ? price : price + createUniqueCode()
+
         return `📦 *${product.name}*
 Stok: ${product.stock}
 Harga: ${formatRupiah(price)}
-Kode: buy ${product.id}`
+${reseller ? "" : `Estimasi QRIS: ${formatRupiah(estimatedTotal)}\n`}Kode: buy ${product.id}`
       }).join("\n\n")
     }
 
@@ -70,7 +76,7 @@ buy <id_produk>
 👑 Reseller:
 reseller
 
-${reseller ? "💳 Deposit saldo:\ndeposit 50000" : "User biasa tidak perlu deposit saldo."}${SUPPORT_TEXT}
+${reseller ? "💰 Deposit saldo:\ndeposit 50000" : "User biasa tidak perlu deposit saldo."}${SUPPORT_TEXT}
 ━━━━━━━━━━━━━━━━━━`
 
     await sock.sendMessage(userId, { text: message })

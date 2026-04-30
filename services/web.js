@@ -9,8 +9,13 @@ export function setQR(qr) {
   if (qr !== latestQR) {
     latestQR = qr
     isConnected = false
-    log("WEB", "QR login diperbarui")
+    if (qr) log("WEB", "QR login diperbarui")
   }
+}
+
+export function clearQR() {
+  latestQR = null
+  isConnected = false
 }
 
 export function setConnected(connected) {
