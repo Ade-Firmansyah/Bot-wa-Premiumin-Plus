@@ -23,15 +23,32 @@ const logger = pino({
 let sock = null
 let reconnectDelay = 5000
 let reconnectTimer = null
+let keepAliveTimer = null
 let isShuttingDown = false
+let isInitializing = false
+let isConnected = false
+let socketGeneration = 0
 
-const MAX_RECONNECT_DELAY = 60000
+const MAX_RECONNECT_DELAY = 30000
+const KEEP_ALIVE_INTERVAL = 4 * 60 * 1000
 let signalErrorCount = 0
 let lastSignalRepairAt = 0
 
 installSignalErrorGuard()
 
 async function initBot() {
+  if (isInitializing) {
+    log("STARTUP", "Init masih berjalan, skip init ganda")
+    return
+  }
+
+  if (sock && isConnected) {
+    log("CONNECTED", "✅ WhatsApp sudah terhubung, skip init ganda")
+    return
+  }
+
+  isInitializing = true
+
   try {
     log("STARTUP", "Menyiapkan WhatsApp bot Premiumin Plus")
 
@@ -40,13 +57,27 @@ async function initBot() {
     }
 
     if (sessionManager.isCorrupted()) {
-      log("SESSION", "Session rusak, reset otomatis")
+      log("SESSION", "🔐 Session memiliki file kosong, menjalankan soft repair")
+      sessionManager.removeEmptySessionFiles()
+    }
+
+    if (sessionManager.isCorrupted() && !sessionManager.hasValidCreds()) {
+      log("SESSION", "❌ Session corrupt tanpa creds valid, reset penuh diperlukan")
       sessionManager.clear()
       sessionManager.ensure()
     }
 
+    cleanupSocketListeners()
+
     const { state, saveCreds } = await useMultiFileAuthState("./session")
     const { version } = await fetchLatestBaileysVersion()
+    const currentGeneration = ++socketGeneration
+
+    if (sessionManager.hasValidCreds()) {
+      log("SESSION", "🔐 Session loaded")
+    } else {
+      log("SESSION", "🔐 Session baru, menunggu QR login")
+    }
 
     sock = makeWASocket({
       auth: state,
@@ -54,19 +85,29 @@ async function initBot() {
       browser: Browsers.macOS("Premiumin Plus"),
       version,
       syncFullHistory: false,
+      connectTimeoutMs: 60000,
+      keepAliveIntervalMs: 20000,
+      defaultQueryTimeoutMs: 60000,
+      markOnlineOnConnect: true,
       logger,
       retryRequestDelayMs: 10,
       maxRetries: 5
     })
 
     sock.ev.on("creds.update", saveCreds)
-    sock.ev.on("connection.update", handleConnectionUpdate)
-    sock.ev.on("messages.upsert", handleMessagesUpsert)
+    sock.ev.on("connection.update", update => {
+      if (currentGeneration === socketGeneration) handleConnectionUpdate(update)
+    })
+    sock.ev.on("messages.upsert", payload => {
+      if (currentGeneration === socketGeneration) handleMessagesUpsert(payload)
+    })
 
     log("STARTUP", `Socket aktif dengan Baileys ${version.join(".")}`)
   } catch (error) {
-    log("STARTUP", `Init gagal: ${error.message}`)
+    log("ERROR", `❌ Init gagal: ${error.message}`)
     scheduleReconnect()
+  } finally {
+    isInitializing = false
   }
 }
 
@@ -80,18 +121,31 @@ function handleConnectionUpdate(update) {
 
   if (connection === "open") {
     setConnected(true)
+    isConnected = true
     reconnectDelay = 5000
-    log("WHATSAPP", "Terhubung dan siap menerima pesan")
+    log("CONNECTED", "✅ WhatsApp connected")
+    log("SESSION", "🔐 Session restored successfully")
+    startKeepAlive()
   }
 
   if (connection === "close") {
     setConnected(false)
+    isConnected = false
+    stopKeepAlive()
     const statusCode = lastDisconnect?.error?.output?.statusCode
     const reason = lastDisconnect?.error?.output?.payload?.statusCode
-    log("WHATSAPP", `Koneksi tertutup, code=${statusCode || reason || "unknown"}`)
+    const disconnectCode = statusCode || reason || "unknown"
+    log("RECONNECT", `🔄 Connection closed, code=${disconnectCode}`)
 
     if (statusCode === DisconnectReason.loggedOut) {
-      resetSessionAndReconnect("Akun logout atau session 401")
+      resetSessionAndReconnect("Real logout terdeteksi")
+      return
+    }
+
+    if (
+      shouldClearSession(statusCode, lastDisconnect?.error)
+    ) {
+      resetSessionAndReconnect("Session corrupt terkonfirmasi")
       return
     }
 
@@ -99,10 +153,10 @@ function handleConnectionUpdate(update) {
       statusCode === DisconnectReason.connectionReplaced ||
       statusCode === DisconnectReason.badSession ||
       reason === DisconnectReason.connectionReplaced ||
-      shouldClearSession(statusCode, lastDisconnect?.error)
+      [440, 515].includes(statusCode)
     ) {
-      resetSessionAndReconnect("Session invalid atau terganti")
-      return
+      log("SESSION", "🔐 Menjaga creds.json, hanya repair file Signal lalu reconnect")
+      sessionManager.softReset()
     }
 
     scheduleReconnect()
@@ -133,13 +187,47 @@ function scheduleReconnect() {
   if (reconnectTimer || isShuttingDown) return
 
   const delay = Math.min(reconnectDelay, MAX_RECONNECT_DELAY)
-  log("RECONNECT", `Mencoba ulang dalam ${Math.round(delay / 1000)} detik`)
+  log("RECONNECT", `🔄 Reconnecting in ${Math.round(delay / 1000)}s`)
 
   reconnectTimer = setTimeout(async () => {
     reconnectTimer = null
-    reconnectDelay = Math.min(reconnectDelay * 1.5, MAX_RECONNECT_DELAY)
+    reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY)
     if (!isShuttingDown) await initBot()
   }, delay)
+}
+
+function startKeepAlive() {
+  stopKeepAlive()
+
+  keepAliveTimer = setInterval(async () => {
+    if (!sock || !isConnected || isShuttingDown) return
+
+    try {
+      await sock.sendPresenceUpdate("available")
+      log("CONNECTED", "✅ Keep-alive sent")
+    } catch (error) {
+      log("ERROR", `❌ Keep-alive failed: ${error.message}`)
+    }
+  }, KEEP_ALIVE_INTERVAL)
+}
+
+function stopKeepAlive() {
+  if (keepAliveTimer) {
+    clearInterval(keepAliveTimer)
+    keepAliveTimer = null
+  }
+}
+
+function cleanupSocketListeners() {
+  if (!sock?.ev?.removeAllListeners) return
+
+  try {
+    sock.ev.removeAllListeners("connection.update")
+    sock.ev.removeAllListeners("messages.upsert")
+    sock.ev.removeAllListeners("creds.update")
+  } catch (error) {
+    log("ERROR", `❌ Gagal membersihkan listener socket lama: ${error.message}`)
+  }
 }
 
 function gracefulShutdown(signal) {
@@ -147,6 +235,8 @@ function gracefulShutdown(signal) {
   isShuttingDown = true
 
   if (reconnectTimer) clearTimeout(reconnectTimer)
+  stopKeepAlive()
+  cleanupSocketListeners()
 
   try {
     sock?.end()

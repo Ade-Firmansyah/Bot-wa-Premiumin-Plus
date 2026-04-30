@@ -174,6 +174,41 @@ npm start
 - Reseller tidak bisa order: cek masa aktif dan saldo.
 - Akun tidak terkirim: cek `status <invoice>` atau hubungi admin.
 
+## Session Stability Fix
+
+Bot memakai `useMultiFileAuthState("./session")` dan wajib menyimpan update kredensial melalui:
+
+```js
+sock.ev.on("creds.update", saveCreds)
+```
+
+Perilaku reconnect production:
+
+- Timeout, restart, koneksi putus, dan network error tidak menghapus session.
+- `creds.json` tidak dihapus kecuali real logout/manual reset/session corrupt berat.
+- File Signal session lama dapat dibersihkan tanpa menghapus login WhatsApp.
+- Reconnect memakai backoff 5s, 10s, 20s, lalu maksimal 30s.
+- Bot mencegah init ganda dan membersihkan listener socket lama sebelum membuat socket baru.
+- Keep-alive ringan dikirim berkala saat WhatsApp sudah connected.
+
+Jika bot logout sendiri:
+
+1. Jalankan:
+
+```bash
+npm run repair-session
+npm start
+```
+
+2. Jika masih gagal dan benar-benar ingin login ulang:
+
+```bash
+npm run clear-session
+npm start
+```
+
+3. Scan QR baru di halaman web.
+
 ## Checklist Production
 
 Jalankan sebelum deploy atau push:

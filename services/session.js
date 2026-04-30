@@ -3,6 +3,7 @@ import path from "path"
 import { log } from "../utils/helper.js"
 
 const SESSION_DIR = "./session"
+const CREDS_FILE = "creds.json"
 
 function ensureSessionDir() {
   try {
@@ -22,9 +23,53 @@ function isSessionCorrupted() {
     if (!fs.existsSync(SESSION_DIR)) return false
     const files = fs.readdirSync(SESSION_DIR)
     if (files.length === 0) return false
-    return files.some(file => fs.statSync(path.join(SESSION_DIR, file)).size === 0)
+    return files.some(file => {
+      const filePath = path.join(SESSION_DIR, file)
+      const stat = fs.statSync(filePath)
+      return stat.size === 0
+    })
   } catch {
     return true
+  }
+}
+
+function hasValidCreds() {
+  try {
+    const credsPath = path.join(SESSION_DIR, CREDS_FILE)
+    if (!fs.existsSync(credsPath)) return false
+    if (fs.statSync(credsPath).size <= 0) return false
+    JSON.parse(fs.readFileSync(credsPath, "utf8"))
+    return true
+  } catch {
+    return false
+  }
+}
+
+function removeEmptySessionFiles() {
+  try {
+    if (!fs.existsSync(SESSION_DIR)) return 0
+
+    let removed = 0
+    for (const file of fs.readdirSync(SESSION_DIR)) {
+      const filePath = path.join(SESSION_DIR, file)
+      try {
+        if (fs.statSync(filePath).size === 0) {
+          fs.unlinkSync(filePath)
+          removed += 1
+        }
+      } catch {
+        // Ignore one broken file and continue repairing the rest.
+      }
+    }
+
+    if (removed > 0) {
+      log("SESSION", `🧹 ${removed} file session kosong dibersihkan`)
+    }
+
+    return removed
+  } catch (error) {
+    log("SESSION", `❌ Gagal membersihkan file kosong: ${error.message}`)
+    return 0
   }
 }
 
@@ -59,6 +104,8 @@ function repairSignalSessions() {
 export const sessionManager = {
   ensure: ensureSessionDir,
 
+  hasValidCreds,
+
   clear: () => {
     try {
       if (fs.existsSync(SESSION_DIR)) {
@@ -76,33 +123,25 @@ export const sessionManager = {
 
   repairSignalSessions,
 
+  removeEmptySessionFiles,
+
   softReset: () => {
     try {
-      if (!fs.existsSync(SESSION_DIR)) return true
-
-      for (const file of fs.readdirSync(SESSION_DIR)) {
-        const filePath = path.join(SESSION_DIR, file)
-        try {
-          if (fs.statSync(filePath).size === 0) fs.unlinkSync(filePath)
-        } catch {
-          // Ignore individual session file issues.
-        }
-      }
-
-      log("SESSION", "Soft reset selesai")
+      removeEmptySessionFiles()
+      repairSignalSessions()
+      log("SESSION", "🔐 Soft reset selesai tanpa menghapus creds.json")
       return true
     } catch (error) {
-      log("SESSION", `Soft reset gagal: ${error.message}`)
+      log("SESSION", `❌ Soft reset gagal: ${error.message}`)
       return false
     }
   }
 }
 
 export function shouldClearSession(statusCode, error) {
-  if ([401, 440, 500].includes(statusCode)) {
-    log("SESSION", `Status ${statusCode} membutuhkan reset session`)
-    return true
-  }
+  const corrupted = isSessionCorrupted() && !hasValidCreds()
+
+  if ([440, 515].includes(statusCode) && corrupted) return true
 
   const message = error?.message?.toString().toLowerCase() || ""
   const badSessionKeywords = [
@@ -119,5 +158,5 @@ export function shouldClearSession(statusCode, error) {
     "invalid session"
   ]
 
-  return badSessionKeywords.some(keyword => message.includes(keyword))
+  return corrupted && badSessionKeywords.some(keyword => message.includes(keyword))
 }
