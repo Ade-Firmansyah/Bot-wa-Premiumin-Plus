@@ -174,6 +174,26 @@ npm start
 - Reseller tidak bisa order: cek masa aktif dan saldo.
 - Akun tidak terkirim: cek `status <invoice>` atau hubungi admin.
 
+## Checklist Production
+
+Jalankan sebelum deploy atau push:
+
+```bash
+npm install
+npm test
+npm audit --audit-level=critical
+npm start
+```
+
+Pastikan hasilnya:
+
+- `npm test` tidak error.
+- `npm audit --audit-level=critical` menampilkan `found 0 vulnerabilities`.
+- Web QR aktif di port yang diset pada `.env`.
+- User biasa membeli lewat QRIS, bukan saldo.
+- Reseller aktif membeli lewat saldo dan refund jika API gagal.
+- `database/db.json` tidak ikut commit karena berisi data live.
+
 ## Struktur Project
 
 ```text
